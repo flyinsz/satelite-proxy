@@ -496,6 +496,26 @@ export interface ManualNodeDraft {
 /** Clash-style routing mode. */
 export type OutboundMode = "rule" | "global" | "direct";
 
+/** System-proxy implementation: manual (fixed port) | pac (script URL). */
+export type SystemProxyKind = "manual" | "pac";
+
+/** PAC routing list: domains / IP-CIDRs / suffixes / regions. */
+export interface PacList {
+  domains: string[];
+  ip_cidrs: string[];
+  suffixes: string[];
+  regions: string[];
+}
+
+/** Live state of the PAC service (get_pac_status). */
+export interface PacStatus {
+  kind: SystemProxyKind;
+  enabled: boolean;
+  url: string;
+  domain_count: number;
+  last_update: number | null;
+}
+
 /** Extra sing-box inbound listener (settings-managed). */
 export interface ExtraInbound {
   id: string;
@@ -524,6 +544,10 @@ export interface AppSettings {
   tun_enabled?: boolean;
   /** Persisted traffic capture preference. */
   capture_mode?: "off" | "system" | "tun";
+  /** system 模式下的系统代理实现：manual（固定端口）| pac（脚本 URL）。 */
+  system_proxy_kind?: SystemProxyKind;
+  /** 本地 PAC HTTP 服务端口。 */
+  pac_port?: number;
   /** system | gvisor | mixed */
   tun_stack?: string;
   /** Include an IPv6 address on the TUN interface. Off by default — most
@@ -686,6 +710,8 @@ export interface ProxyStatus {
   tun_enabled: boolean;
   /** Persisted desired traffic capture mode. */
   capture_mode?: "off" | "system" | "tun";
+  /** system 模式下的系统代理实现方式。 */
+  system_proxy_kind?: string;
   /** rule | global | direct */
   outbound_mode: string;
   mixed_port: number;

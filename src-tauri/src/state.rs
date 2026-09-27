@@ -4,10 +4,26 @@ use crate::core::CoreKind;
 use crate::error::AppResult;
 use crate::runtime::{ConnectionView, LiveConnectionBatch, ProxyStatus, RequestBatch, Runtime};
 use crate::storage::{default_store_path, AppStore};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, TryLockError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// PAC 功能状态快照（`get_pac_status` 命令的返回体）。
+#[derive(Debug, Clone, Serialize)]
+pub struct PacStatus {
+    /// system 代理实现方式：manual | pac。
+    pub kind: String,
+    /// 系统代理当前是否为 PAC 模式（PAC 服务运行且被系统引用）。
+    pub enabled: bool,
+    /// 系统代理指向的 PAC 脚本 URL。
+    pub url: String,
+    /// 当前 PAC 名单中的域名数。
+    pub domain_count: usize,
+    /// gfwlist 上次刷新时间戳（unix 秒）。
+    pub last_update: Option<u64>,
+}
 
 const KERNEL_SELECTION_POLL_INTERVAL: Duration = Duration::from_secs(2);
 const KERNEL_SELECTION_HTTP_TIMEOUT: Duration = Duration::from_millis(800);
@@ -1786,6 +1802,112 @@ impl AppState {
         Ok(store.settings.clone())
     }
 
+    /// 切换 system 代理实现方式 manual|pac；若 system 代理当前开启则重新应用。
+    ///
+    /// 锁顺序沿用 `set_capture_mode`：runtime → store_persistence → store。
+    pub fn set_system_proxy_kind(
+        &self,
+        kind: &str,
+        resource_dir: Option<&Path>,
+    ) -> AppResult<ProxyStatus> {
+        let _ = resource_dir;
+        let kind = crate::domain::SystemProxyKind::parse(kind).ok_or_else(|| {
+            crate::error::AppError::Core("system proxy kind must be manual | pac".into())
+        })?;
+        let _transition = self.begin_core_transition()?;
+        let mut runtime = self.lock_runtime();
+        let _persistence = self.lock_store_persistence();
+        let mut store = self.lock_store();
+
+        if store.settings.system_proxy_kind == kind {
+            let status = runtime.status(&store);
+            self.cache_status(&status);
+            return Ok(status);
+        }
+        store.settings.system_proxy_kind = kind;
+
+        // 系统代理开启中 → 强制重应用，保证 PAC 服务与 networksetup 正确切换。
+        let sys_active = runtime.system_proxy_on
+            && store.settings.capture_mode == crate::domain::CaptureMode::System;
+        if sys_active {
+            runtime.set_system_proxy(&store, false)?;
+            runtime.set_system_proxy(&store, true)?;
+        }
+        store.save(&self.store_path)?;
+        let status = runtime.status(&store);
+        self.cache_status(&status);
+        Ok(status)
+    }
+
+    /// 当前 PAC 名单（拷贝）。
+    pub fn pac_list(&self) -> AppResult<crate::pac::PacList> {
+        self.with_store(|store| Ok(store.settings.pac_list.clone()))
+    }
+
+    /// 保存 PAC 名单；若 PAC 服务正在运行则重建内容使变更立即生效。
+    pub fn set_pac_list(&self, list: crate::pac::PacList) -> AppResult<crate::pac::PacList> {
+        let mut runtime = self.lock_runtime();
+        let _persistence = self.lock_store_persistence();
+        let mut store = self.lock_store();
+        store.settings.pac_list = list.clone();
+        store.save(&self.store_path)?;
+        // 名单已持久化；PAC 服务重建失败仅影响运行态，不阻塞保存。
+        if runtime.pac_active {
+            runtime.refresh_pac_content(&store)?;
+        }
+        Ok(list)
+    }
+
+    /// 拉取 gfwlist 并合并进 PAC 名单（去重），更新刷新时间戳。
+    ///
+    /// 网络拉取在锁外完成（最多 30s），避免长时间占用 store/runtime 锁；
+    /// reqwest 若在 block_on 下报 runtime 错误会回退到 ureq 同步拉取。
+    pub fn refresh_gfwlist(&self) -> AppResult<crate::pac::PacList> {
+        let url = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt";
+        let fetched = fetch_gfwlist_blocking(url)?;
+
+        let mut runtime = self.lock_runtime();
+        let _persistence = self.lock_store_persistence();
+        let mut store = self.lock_store();
+        // 已有域名保留顺序，新增域名去重追加。
+        let mut seen: std::collections::HashSet<String> =
+            store.settings.pac_list.domains.iter().cloned().collect();
+        for domain in fetched {
+            if seen.insert(domain.clone()) {
+                store.settings.pac_list.domains.push(domain);
+            }
+        }
+        store.settings.pac_last_update = Some(
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+        );
+        let out = store.settings.pac_list.clone();
+        store.save(&self.store_path)?;
+        // 名单已持久化；PAC 服务重建失败仅影响运行态，不阻塞保存。
+        if runtime.pac_active {
+            runtime.refresh_pac_content(&store)?;
+        }
+        Ok(out)
+    }
+
+    /// PAC 功能状态快照。
+    pub fn pac_status(&self) -> AppResult<PacStatus> {
+        let runtime = self.lock_runtime();
+        let store = self.lock_store();
+        Ok(PacStatus {
+            kind: store.settings.system_proxy_kind.as_str().to_string(),
+            enabled: runtime.pac_active,
+            url: format!(
+                "http://127.0.0.1:{}/proxy.pac",
+                store.settings.pac_port
+            ),
+            domain_count: store.settings.pac_list.domains.len(),
+            last_update: store.settings.pac_last_update,
+        })
+    }
+
     /// Last observed core state from the status cache; `is_core_running`
     /// refreshes it as a side effect (and reaps a dead child first).
     pub fn cached_core_state(&self) -> CoreState {
@@ -2050,6 +2172,44 @@ pub fn spawn_core_watchdog(app: tauri::AppHandle) {
             }
         })
         .ok();
+}
+
+/// 阻塞式拉取并解析 gfwlist（base64）。
+///
+/// 优先用 `tauri::async_runtime::block_on(reqwest)` —— 本函数只会在
+/// spawn_blocking 线程（非 tokio worker）里被调用，block_on 启动嵌套
+/// runtime 是安全的。若 reqwest 仍报 nested-runtime 错误，回退到 ureq
+/// 同步拉取并复用 `crate::pac::gfwlist::parse_gfwlist_text` 解码。
+fn fetch_gfwlist_blocking(url: &str) -> AppResult<Vec<String>> {
+    match tauri::async_runtime::block_on(crate::pac::gfwlist::fetch_gfwlist(url)) {
+        Ok(domains) => Ok(domains),
+        Err(reqwest_err) => {
+            app_log::warn(
+                "pac",
+                format!("reqwest gfwlist fetch failed ({reqwest_err}); falling back to ureq"),
+            );
+            let body = ureq::get(url)
+                .timeout(Duration::from_secs(30))
+                .call()
+                .map_err(|error| {
+                    crate::error::AppError::Fetch(format!("fetch gfwlist via ureq: {error}"))
+                })?
+                .into_string()
+                .map_err(|error| {
+                    crate::error::AppError::Fetch(format!("read gfwlist body: {error}"))
+                })?;
+            use base64::Engine as _;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(body.trim())
+                .map_err(|error| {
+                    crate::error::AppError::Fetch(format!("base64 decode gfwlist: {error}"))
+                })?;
+            let text = String::from_utf8(decoded).map_err(|error| {
+                crate::error::AppError::Fetch(format!("gfwlist is not valid utf-8: {error}"))
+            })?;
+            Ok(crate::pac::gfwlist::parse_gfwlist_text(&text))
+        }
+    }
 }
 
 #[cfg(test)]

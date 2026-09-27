@@ -19,6 +19,7 @@ import {
   setCoreType,
   setRuntimeSource,
   setOutboundMode,
+  setSystemProxyKind,
   startProxy,
   smartSwitchNow,
   stopProxy,
@@ -659,6 +660,20 @@ function coreDisplayName(kind: string | null | undefined): string {
       if (s) setProxy(s);
     } finally {
       setModeBusy(false);
+    }
+  }
+
+  /** System-proxy implementation under capture `system`: manual | pac. */
+  async function onSetSystemProxyKind(kind: "manual" | "pac") {
+    if ((proxy?.system_proxy_kind ?? "manual") === kind) return;
+    setError(null);
+    try {
+      const s = await setSystemProxyKind(kind);
+      setProxy(s);
+    } catch (e) {
+      setError(typeof e === "string" ? e : String(e));
+      const s = await getProxyStatus().catch(() => null);
+      if (s) setProxy(s);
     }
   }
 
@@ -1459,6 +1474,27 @@ function coreDisplayName(kind: string | null | undefined): string {
                 { value: "tun", label: t("dashboard.captureTun") },
               ]}
             />
+            {captureMode === "system" && (
+              <div
+                className="dash-inline-row dash-capture dash-capture-kind"
+                style={{ flexBasis: "100%" }}
+              >
+                <span className="dash-inline-label">
+                  {t("dashboard.captureSystemKind")}
+                </span>
+                <GlassSeg
+                  value={proxy?.system_proxy_kind ?? "manual"}
+                  ready={statusReady}
+                  ariaLabel={t("dashboard.captureSystemKind")}
+                  disabled={!statusReady || captureBusy}
+                  onChange={(v) => void onSetSystemProxyKind(v as "manual" | "pac")}
+                  options={[
+                    { value: "manual", label: t("dashboard.captureManual") },
+                    { value: "pac", label: t("dashboard.capturePac") },
+                  ]}
+                />
+              </div>
+            )}
           </div>
         </aside>
       </section>

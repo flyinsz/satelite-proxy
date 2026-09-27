@@ -43,6 +43,34 @@ impl CaptureMode {
     }
 }
 
+/// system 模式下系统代理的实现方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum SystemProxyKind {
+    /// 手动代理：固定指向 mixed 端口（现状）。
+    #[default]
+    Manual,
+    /// PAC 自动代理：指向本地 PAC 脚本 URL。
+    Pac,
+}
+
+impl SystemProxyKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::Pac => "pac",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "manual" => Some(Self::Manual),
+            "pac" | "auto" => Some(Self::Pac),
+            _ => None,
+        }
+    }
+}
+
 impl OutboundMode {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -218,6 +246,18 @@ pub struct AppSettings {
     /// Last selected traffic-capture mode: off | system | tun.
     #[serde(default)]
     pub capture_mode: CaptureMode,
+    /// system 模式下的系统代理实现方式：manual（固定端口）| pac（脚本 URL）。
+    #[serde(default)]
+    pub system_proxy_kind: SystemProxyKind,
+    /// 本地 PAC HTTP 服务监听端口。
+    #[serde(default = "default_pac_port")]
+    pub pac_port: u16,
+    /// PAC 名单（域名 / IP-CIDR / 后缀 / 地区）。
+    #[serde(default)]
+    pub pac_list: crate::pac::PacList,
+    /// gfwlist 上次刷新时间戳（unix 秒）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pac_last_update: Option<u64>,
     /// TUN TCP/IP stack: `system` | `gvisor` | `mixed` (default mixed).
     #[serde(default = "default_tun_stack")]
     pub tun_stack: String,
@@ -361,6 +401,10 @@ fn default_sidecar_port() -> u16 {
     20890
 }
 
+fn default_pac_port() -> u16 {
+    2085
+}
+
 fn default_runtime_source() -> String {
     "generated".into()
 }
@@ -475,6 +519,10 @@ impl Default for AppSettings {
             mix_mode: false,
             tun_enabled: false,
             capture_mode: CaptureMode::Off,
+            system_proxy_kind: SystemProxyKind::Manual,
+            pac_port: default_pac_port(),
+            pac_list: crate::pac::PacList::default(),
+            pac_last_update: None,
             tun_stack: default_tun_stack(),
             tun_ipv6_enabled: false,
             block_quic: false,

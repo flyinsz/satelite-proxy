@@ -10,11 +10,15 @@ import {
   resetCoreToBundled,
   getAppInstallPath,
   getCoreInfo,
+  getPacList,
+  getPacStatus,
   getProxyStatus,
   getSettings,
+  refreshGfwlist,
   regenerateApiSecret,
   restartProxy,
   setCoreType,
+  updatePacList,
   updateSettings,
 } from "../api";
 import { GlassButton } from "../components/GlassButton";
@@ -43,6 +47,8 @@ import type {
   DiagnosticIssue,
   ExtraInbound,
   HeroStyle,
+  PacList,
+  PacStatus,
   ThemeId,
 } from "../types";
 import { RulesPage } from "./RulesPage";
@@ -53,6 +59,7 @@ import { HostsPage } from "./HostsPage";
 type SettingsTab =
   | "app"
   | "ports"
+  | "pac"
   | "rules"
   | "chain"
   | "multiCore"
@@ -195,6 +202,70 @@ export function SettingsPage() {
   /** Absolute path of the app's own executable, shown like the kernel path. */
   const [appPath, setAppPath] = useState<string | null>(null);
 
+  // ---- PAC tab state ---------------------------------------------------
+  const [pacStatus, setPacStatus] = useState<PacStatus | null>(null);
+  const [pacList, setPacList] = useState<PacList | null>(null);
+  const [pacSaving, setPacSaving] = useState(false);
+  const [pacRefreshing, setPacRefreshing] = useState(false);
+  const [pacError, setPacError] = useState<string | null>(null);
+
+  const reloadPacTab = useCallback(async () => {
+    const [status, list] = await Promise.all([
+      getPacStatus().catch(() => null),
+      getPacList().catch(() => null),
+    ]);
+    setPacStatus(status);
+    if (list) setPacList(list);
+  }, []);
+
+  const parseTextareaList = useCallback(
+    (raw: string): string[] =>
+      [
+        ...new Set(
+          raw
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0 && !line.startsWith("#")),
+        ),
+      ],
+    [],
+  );
+
+  const savePacList = useCallback(async () => {
+    if (!pacList) return;
+    setPacSaving(true);
+    setPacError(null);
+    try {
+      const next = {
+        domains: parseTextareaList(pacList.domains.join("\n")),
+        ip_cidrs: parseTextareaList(pacList.ip_cidrs.join("\n")),
+        suffixes: parseTextareaList(pacList.suffixes.join("\n")),
+        regions: parseTextareaList(pacList.regions.join("\n")),
+      };
+      const saved = await updatePacList(next);
+      setPacList(saved);
+      setPacStatus(await getPacStatus().catch(() => null));
+    } catch (e) {
+      setPacError(t("pac.saveError", { err: typeof e === "string" ? e : String(e) }));
+    } finally {
+      setPacSaving(false);
+    }
+  }, [pacList, parseTextareaList, t]);
+
+  const onRefreshGfwlist = useCallback(async () => {
+    setPacRefreshing(true);
+    setPacError(null);
+    try {
+      const merged = await refreshGfwlist();
+      setPacList(merged);
+      setPacStatus(await getPacStatus().catch(() => null));
+    } catch (e) {
+      setPacError(t("pac.refreshError", { err: typeof e === "string" ? e : String(e) }));
+    } finally {
+      setPacRefreshing(false);
+    }
+  }, [t]);
+
   const tabs = useMemo(
     () =>
       [
@@ -207,6 +278,11 @@ export function SettingsPage() {
           id: "ports" as const,
           label: t("settings.tabPorts"),
           hint: t("settings.hintPorts"),
+        },
+        {
+          id: "pac" as const,
+          label: t("settings.tabPac"),
+          hint: t("settings.hintPac"),
         },
         {
           id: "rules" as const,
@@ -1015,6 +1091,13 @@ export function SettingsPage() {
   const visibleTab =
     customRuntime && CUSTOM_BLOCKED_TABS.has(tab) ? "app" : tab;
 
+  // Reload PAC service state + list whenever the tab becomes visible.
+  useEffect(() => {
+    if (visibleTab !== "pac") return;
+    void reloadPacTab();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibleTab]);
+
   // ←/→ cycle through the settings sub-tabs, skipping any the custom
   // runtime blocks. Ignored while typing (input/textarea/select) so text
   // cursor movement and dropdown navigation are unaffected.
@@ -1817,6 +1900,165 @@ export function SettingsPage() {
               </div>
             </div>
           </div>
+        </section>
+      )}
+
+      {visibleTab === "pac" && (
+        <section className="settings-panel" aria-label="PAC list">
+          {pacError && (
+            <ErrorModal message={pacError} onClose={() => setPacError(null)} />
+          )}
+
+          {!pacStatus && !pacList ? (
+            <div className="field-hint muted">{t("common.loading")}</div>
+          ) : (
+            <div className="card settings-form settings-form-grid">
+              <div className="field-span-2">
+                <div className="sys-proxy-title">
+                  {t("pac.status")}
+                  <span className={`pill${pacStatus?.enabled ? " ok" : ""}`}>
+                    {pacStatus?.enabled
+                      ? t("pac.enabled")
+                      : t("pac.disabled")}
+                  </span>
+                </div>
+                <div className="field-hint muted">
+                  <span className="stat-label">{t("pac.url")}</span>{" "}
+                  <code className="mono">{pacStatus?.url || "—"}</code>
+                  <span className="stat-label"> · {t("pac.lastUpdate")}</span>{" "}
+                  <span className="mono">
+                    {pacStatus?.last_update
+                      ? new Date(pacStatus.last_update).toLocaleString()
+                      : t("pac.never")}
+                  </span>
+                  <span className="stat-label"> · {t("pac.domainCount")}</span>{" "}
+                  <span className="mono">
+                    {pacStatus?.domain_count ?? pacList?.domains.length ?? 0}
+                  </span>
+                </div>
+              </div>
+
+              <label className="field">
+                <span>{t("pac.domains")}</span>
+                <textarea
+                  className="config-paste mono"
+                  rows={6}
+                  placeholder="google.com"
+                  spellCheck={false}
+                  value={(pacList?.domains ?? []).join("\n")}
+                  onChange={(e) =>
+                    setPacList((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            domains: e.target.value.split(/\r?\n/),
+                          }
+                        : prev,
+                    )
+                  }
+                />
+                <span className="field-hint muted">
+                  {t("pac.domainsHint")}
+                </span>
+              </label>
+
+              <label className="field">
+                <span>{t("pac.ipCidrs")}</span>
+                <textarea
+                  className="config-paste mono"
+                  rows={6}
+                  placeholder="1.2.3.4
+10.0.0.0/8"
+                  spellCheck={false}
+                  value={(pacList?.ip_cidrs ?? []).join("\n")}
+                  onChange={(e) =>
+                    setPacList((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            ip_cidrs: e.target.value.split(/\r?\n/),
+                          }
+                        : prev,
+                    )
+                  }
+                />
+                <span className="field-hint muted">
+                  {t("pac.ipCidrsHint")}
+                </span>
+              </label>
+
+              <label className="field">
+                <span>{t("pac.suffixes")}</span>
+                <textarea
+                  className="config-paste mono"
+                  rows={6}
+                  placeholder=".githubusercontent.com"
+                  spellCheck={false}
+                  value={(pacList?.suffixes ?? []).join("\n")}
+                  onChange={(e) =>
+                    setPacList((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            suffixes: e.target.value.split(/\r?\n/),
+                          }
+                        : prev,
+                    )
+                  }
+                />
+                <span className="field-hint muted">
+                  {t("pac.suffixesHint")}
+                </span>
+              </label>
+
+              <label className="field">
+                <span>{t("pac.regions")}</span>
+                <textarea
+                  className="config-paste mono"
+                  rows={6}
+                  placeholder="US
+HK"
+                  spellCheck={false}
+                  value={(pacList?.regions ?? []).join("\n")}
+                  onChange={(e) =>
+                    setPacList((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            regions: e.target.value.split(/\r?\n/),
+                          }
+                        : prev,
+                    )
+                  }
+                />
+                <span className="field-hint muted">
+                  {t("pac.regionsHint")}
+                </span>
+              </label>
+
+              <div
+                className="field field-span-2"
+                style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}
+              >
+                <GlassButton
+                  icon="💾"
+                  disabled={pacSaving || !pacList}
+                  onClick={() => void savePacList()}
+                >
+                  {pacSaving ? t("pac.saving") : t("pac.save")}
+                </GlassButton>
+                <GlassButton
+                  icon="↻"
+                  disabled={pacRefreshing}
+                  onClick={() => void onRefreshGfwlist()}
+                >
+                  {pacRefreshing
+                    ? t("pac.refreshing")
+                    : t("pac.refresh")}
+                </GlassButton>
+              </div>
+            </div>
+          )}
         </section>
       )}
 

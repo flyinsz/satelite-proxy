@@ -10,6 +10,7 @@ mod domain;
 mod error;
 mod log_listener;
 mod log_retention;
+mod pac;
 mod portable;
 mod proxy;
 mod remote_rule_auto;
@@ -469,6 +470,11 @@ pub fn run() {
             commands::set_tun_enabled,
             commands::set_capture_mode,
             commands::set_outbound_mode,
+            commands::set_system_proxy_kind,
+            commands::get_pac_list,
+            commands::update_pac_list,
+            commands::refresh_gfwlist,
+            commands::get_pac_status,
             commands::get_dns_settings,
             commands::update_dns_settings,
             commands::reset_dns_defaults,

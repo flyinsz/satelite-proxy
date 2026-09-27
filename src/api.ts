@@ -33,6 +33,8 @@ import type {
   DnsDiagnosisReport,
   ExitIpInfo,
   HostsEntry,
+  PacList,
+  PacStatus,
 } from "./types";
 import { trackCoreBusy } from "./coreBusy";
 
@@ -761,6 +763,32 @@ export function setCaptureMode(mode: "off" | "system" | "tun") {
   return keepProxy(
     trackCoreBusy(invoke<ProxyStatus>("set_capture_mode", { mode })),
   );
+}
+
+/** System-proxy implementation under capture mode `system`: manual (fixed
+ *  port) | pac (PAC script URL). */
+export function setSystemProxyKind(kind: "manual" | "pac") {
+  return keepProxy(invoke<ProxyStatus>("set_system_proxy_kind", { kind }));
+}
+
+/** Current PAC routing list (domains / IP-CIDRs / suffixes / regions). */
+export function getPacList() {
+  return invoke<PacList>("get_pac_list");
+}
+
+/** Persist the whole PAC routing list. Returns the stored list. */
+export function updatePacList(list: PacList) {
+  return invoke<PacList>("update_pac_list", { list });
+}
+
+/** Re-pull the upstream GFWList and merge it into the PAC list. */
+export function refreshGfwlist() {
+  return invoke<PacList>("refresh_gfwlist");
+}
+
+/** Live PAC service state (kind / enabled / url / counts / last update). */
+export function getPacStatus() {
+  return invoke<PacStatus>("get_pac_status");
 }
 
 /** rule | global | direct — restarts core when running. */

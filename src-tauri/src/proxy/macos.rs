@@ -176,4 +176,57 @@ impl SystemProxy for MacSystemProxy {
             }))
         }
     }
+
+    fn enable_pac(&self, url: &str) -> AppResult<SystemProxySnapshot> {
+        let services = Self::services()?;
+        let mut enabled_services = Vec::new();
+
+        for svc in &services {
+            // Point the service at the local PAC script URL; only services that
+            // accept it count as enabled.
+            let set_url = Command::new("networksetup")
+                .args(["-setautoproxyurl", svc, url])
+                .status();
+            if !matches!(set_url, Ok(s) if s.success()) {
+                continue;
+            }
+            let _ = Self::run(&["-setautoproxystate", svc, "on"]);
+            enabled_services.push(svc.clone());
+        }
+
+        if enabled_services.is_empty() {
+            return Err(AppError::Core(
+                "failed to enable PAC proxy on any network service".into(),
+            ));
+        }
+
+        Ok(SystemProxySnapshot {
+            detail: enabled_services.join("|"),
+        })
+    }
+
+    fn disable_pac(&self, snapshot: Option<&SystemProxySnapshot>) -> AppResult<()> {
+        let services: Vec<String> = if let Some(s) = snapshot {
+            s.detail
+                .split('|')
+                .filter(|x| !x.is_empty())
+                .map(|s| s.to_string())
+                .collect()
+        } else {
+            Self::services().unwrap_or_else(|_| vec!["Wi-Fi".into()])
+        };
+
+        let mut first_error = None;
+        for svc in services {
+            if let Err(error) = Self::run(&["-setautoproxystate", &svc, "off"]) {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        Ok(())
+    }
 }

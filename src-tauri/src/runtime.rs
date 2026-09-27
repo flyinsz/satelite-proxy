@@ -27,6 +27,9 @@ pub struct ProxyStatus {
     pub running: bool,
     pub core_state: CoreState,
     pub system_proxy: bool,
+    /// system 代理实现方式：manual | pac（供前端判断当前形态）。
+    #[serde(default)]
+    pub system_proxy_kind: Option<String>,
     /// Whether TUN is enabled in settings (applied on next start / restart).
     pub tun_enabled: bool,
     /// Persisted desired capture mode: off | system | tun.
@@ -186,6 +189,10 @@ pub struct Runtime {
     sidecars: Vec<SidecarProc>,
     pub system_proxy_on: bool,
     pub proxy_snapshot: Option<SystemProxySnapshot>,
+    /// PAC 本地 HTTP 服务（system + pac 模式时运行）。
+    pac_server: Option<crate::pac::server::PacServer>,
+    /// 当前系统代理是否为 PAC 模式（用于 disable 时选择 disable_pac）。
+    pub pac_active: bool,
     pub api: Option<ClashApi>,
     /// Xray metrics client (no Clash API exists under Xray).
     pub xray_metrics: Option<XrayMetrics>,
@@ -320,6 +327,8 @@ impl Runtime {
             sidecars: Vec::new(),
             system_proxy_on: false,
             proxy_snapshot: None,
+            pac_server: None,
+            pac_active: false,
             api: None,
             xray_metrics: None,
             last_config_path: None,
@@ -423,6 +432,7 @@ impl Runtime {
             running: self.core.is_running(),
             core_state: self.core.state(),
             system_proxy: self.system_proxy_on,
+            system_proxy_kind: Some(store.settings.system_proxy_kind.as_str().to_string()),
             tun_enabled: store.settings.tun_enabled,
             capture_mode: store.settings.capture_mode.as_str().to_string(),
             outbound_mode: store.settings.outbound_mode.as_str().to_string(),
@@ -2203,12 +2213,21 @@ impl Runtime {
     }
 
     /// Toggle system HTTP(S)/SOCKS proxy independently of core running state.
+    ///
+    /// 按 `system_proxy_kind` 分发：`pac` 模式启用本地 PAC 服务并把系统代理
+    /// 指向脚本 URL；`manual` 保持原有固定 127.0.0.1:port 手动代理。
+    /// 禁用时按 `pac_active` 选择 `disable_pac` / `disable` 并回收 PAC 服务。
     pub fn set_system_proxy(&mut self, store: &AppStore, enabled: bool) -> AppResult<ProxyStatus> {
         self.core.poll();
         if enabled == self.system_proxy_on {
             return Ok(self.status(store));
         }
         if enabled {
+            // 防御性清理：理论上 pac_active=false 时 pac_server 必为 None，
+            // 但若历史状态不一致（如刷新失败后残留），先回收避免句柄泄漏。
+            if let Some(server) = self.pac_server.take() {
+                tauri::async_runtime::block_on(server.stop());
+            }
             let port = if store.settings.runtime_source().is_custom() {
                 self.custom_inbound_port.ok_or_else(|| {
                     AppError::Core(
@@ -2218,18 +2237,86 @@ impl Runtime {
             } else {
                 store.settings.mixed_port
             };
-            let snap = self.system_proxy.enable("127.0.0.1", port)?;
-            self.proxy_snapshot = Some(snap);
+            if store.settings.system_proxy_kind == crate::domain::SystemProxyKind::Pac {
+                // 生成 PAC 脚本并启动本地服务；端口被占用等失败直接返回。
+                let content =
+                    crate::pac::generator::generate_pac(&store.settings.pac_list, "127.0.0.1", port);
+                let server = tauri::async_runtime::block_on(crate::pac::server::PacServer::start(
+                    store.settings.pac_port,
+                    content,
+                ))
+                .map_err(AppError::Core)?;
+                let url = server.url();
+                match self.system_proxy.enable_pac(&url) {
+                    Ok(snap) => {
+                        self.proxy_snapshot = Some(snap);
+                        self.pac_server = Some(server);
+                        self.pac_active = true;
+                    }
+                    Err(error) => {
+                        // 系统代理启用失败：回收已启动的 PAC 服务，避免句柄泄漏。
+                        tauri::async_runtime::block_on(server.stop());
+                        return Err(error);
+                    }
+                }
+            } else {
+                let snap = self.system_proxy.enable("127.0.0.1", port)?;
+                self.proxy_snapshot = Some(snap);
+                self.pac_active = false;
+            }
             self.system_proxy_on = true;
         } else {
             // Only clear the in-memory state after the operating-system proxy
             // was actually restored. Otherwise the UI would report success
             // while the machine can still be pointing at our local port.
-            self.system_proxy.disable(self.proxy_snapshot.as_ref())?;
+            if self.pac_active {
+                self.system_proxy.disable_pac(self.proxy_snapshot.as_ref())?;
+                if let Some(server) = self.pac_server.take() {
+                    tauri::async_runtime::block_on(server.stop());
+                }
+                self.pac_active = false;
+            } else {
+                self.system_proxy.disable(self.proxy_snapshot.as_ref())?;
+            }
             self.system_proxy_on = false;
             self.proxy_snapshot = None;
         }
         Ok(self.status(store))
+    }
+
+    /// PAC 名单或端口变更后，在系统代理仍为 PAC 模式时重建本地 PAC 服务。
+    ///
+    /// 仅当 `pac_active`（PAC 服务正在运行并被系统代理引用）时有用。
+    /// 同端口绑定要求先停旧服务再启新；启动失败时返回错误，但**保持
+    /// `pac_active` 为 true**——系统代理仍指向 PAC URL，后续
+    /// `set_system_proxy(false)` 会走 `disable_pac` 正确清理。
+    pub fn refresh_pac_content(&mut self, store: &AppStore) -> AppResult<()> {
+        if !self.pac_active {
+            return Ok(());
+        }
+        let port = if store.settings.runtime_source().is_custom() {
+            self.custom_inbound_port.ok_or_else(|| {
+                AppError::Core("自定义配置没有可用的代理入站端口，无法重建 PAC 服务".into())
+            })?
+        } else {
+            store.settings.mixed_port
+        };
+        let content =
+            crate::pac::generator::generate_pac(&store.settings.pac_list, "127.0.0.1", port);
+        // 停掉旧服务释放端口，再启动新的（同端口）。
+        if let Some(server) = self.pac_server.take() {
+            tauri::async_runtime::block_on(server.stop());
+        }
+        match tauri::async_runtime::block_on(crate::pac::server::PacServer::start(
+            store.settings.pac_port,
+            content,
+        )) {
+            Ok(server) => {
+                self.pac_server = Some(server);
+                Ok(())
+            }
+            Err(error) => Err(AppError::Core(format!("重建 PAC 服务失败：{error}"))),
+        }
     }
 
     /// Stop only the managed sing-box process.
@@ -2290,7 +2377,15 @@ impl Runtime {
         // fails, keep the core alive: stopping it would strand the machine on
         // a dead 127.0.0.1 proxy and appear as a system-wide network outage.
         if self.system_proxy_on {
-            self.system_proxy.disable(self.proxy_snapshot.as_ref())?;
+            if self.pac_active {
+                self.system_proxy.disable_pac(self.proxy_snapshot.as_ref())?;
+                if let Some(server) = self.pac_server.take() {
+                    tauri::async_runtime::block_on(server.stop());
+                }
+                self.pac_active = false;
+            } else {
+                self.system_proxy.disable(self.proxy_snapshot.as_ref())?;
+            }
             self.system_proxy_on = false;
             self.proxy_snapshot = None;
         }
@@ -2315,9 +2410,19 @@ impl Runtime {
     /// can be cleared safely.
     pub fn shutdown(&mut self) -> bool {
         let proxy_cleared = if self.system_proxy_on {
-            match self.system_proxy.disable(self.proxy_snapshot.as_ref()) {
+            let result = if self.pac_active {
+                self.system_proxy.disable_pac(self.proxy_snapshot.as_ref())
+            } else {
+                self.system_proxy.disable(self.proxy_snapshot.as_ref())
+            };
+            match result {
                 Ok(()) => {
                     self.system_proxy_on = false;
+                    // 回收本地 PAC 服务（尽力而为，不阻塞退出）。
+                    if let Some(server) = self.pac_server.take() {
+                        tauri::async_runtime::block_on(server.stop());
+                    }
+                    self.pac_active = false;
                     self.proxy_snapshot = None;
                     true
                 }
@@ -2330,6 +2435,11 @@ impl Runtime {
                 }
             }
         } else {
+            // 系统代理未开启，但若残留 PAC 服务句柄仍回收之。
+            if let Some(server) = self.pac_server.take() {
+                tauri::async_runtime::block_on(server.stop());
+            }
+            self.pac_active = false;
             true
         };
         if let Some(api) = self.api.take() {
@@ -3153,6 +3263,21 @@ mod stop_behavior_tests {
 
         fn detect_owned(&self, _host: &str, _port: u16) -> AppResult<Option<SystemProxySnapshot>> {
             Ok(None)
+        }
+
+        fn enable_pac(&self, _url: &str) -> AppResult<SystemProxySnapshot> {
+            Ok(SystemProxySnapshot {
+                detail: "test-pac".into(),
+            })
+        }
+
+        fn disable_pac(&self, _snapshot: Option<&SystemProxySnapshot>) -> AppResult<()> {
+            *self.disabled.lock().expect("disabled counter") += 1;
+            if self.fail_disable {
+                Err(AppError::Core("restore failed".into()))
+            } else {
+                Ok(())
+            }
         }
     }
 

@@ -31,6 +31,10 @@ pub trait SystemProxy: Send + Sync {
     /// Return a disable token only when the enabled OS proxy belongs entirely
     /// to this exact loopback endpoint. Mixed/foreign proxy settings are never claimed.
     fn detect_owned(&self, host: &str, port: u16) -> AppResult<Option<SystemProxySnapshot>>;
+    /// PAC 自动代理：url 为本地 PAC 脚本 URL。
+    fn enable_pac(&self, url: &str) -> AppResult<SystemProxySnapshot>;
+    /// 关闭 PAC 自动代理，恢复直连。
+    fn disable_pac(&self, snapshot: Option<&SystemProxySnapshot>) -> AppResult<()>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

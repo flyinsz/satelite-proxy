@@ -299,6 +299,18 @@ impl SystemProxy for WindowsSystemProxy {
             Ok(None)
         }
     }
+
+    fn enable_pac(&self, _url: &str) -> AppResult<SystemProxySnapshot> {
+        Err(AppError::Core(
+            "PAC mode is not supported on Windows yet".into(),
+        ))
+    }
+
+    fn disable_pac(&self, _snapshot: Option<&SystemProxySnapshot>) -> AppResult<()> {
+        Err(AppError::Core(
+            "PAC mode is not supported on Windows yet".into(),
+        ))
+    }
 }
 
 #[cfg(test)]

@@ -17,4 +17,14 @@ impl SystemProxy for StubSystemProxy {
     fn detect_owned(&self, _host: &str, _port: u16) -> AppResult<Option<SystemProxySnapshot>> {
         Ok(None)
     }
+
+    fn enable_pac(&self, _url: &str) -> AppResult<SystemProxySnapshot> {
+        Ok(SystemProxySnapshot {
+            detail: String::new(),
+        })
+    }
+
+    fn disable_pac(&self, _snapshot: Option<&SystemProxySnapshot>) -> AppResult<()> {
+        Ok(())
+    }
 }
