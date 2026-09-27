@@ -118,3 +118,45 @@ async fn handle_connection(stream: &mut TcpStream, content: &str) -> std::io::Re
     reader.flush().await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn serves_pac_script_and_404s_other_paths() {
+        let content = "function FindProxyForURL(url, host) { return \"DIRECT\"; }\n";
+        // 测试用高位端口，避免与真实运行的 pac_port 冲突。
+        let server = PacServer::start(2099, content.to_string())
+            .await
+            .expect("start pac server");
+
+        // GET /proxy.pac → 200 + 正确的 Content-Type + 完整 body。
+        let resp = reqwest::get(server.url()).await.expect("request proxy.pac");
+        assert_eq!(resp.status(), 200);
+        assert_eq!(
+            resp.headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok()),
+            Some("application/x-ns-proxy-autoconfig")
+        );
+        let body = resp.text().await.expect("read body");
+        assert_eq!(body, content);
+
+        // 其他路径 → 404。
+        let not_found = reqwest::get(format!("http://127.0.0.1:{}/nope", 2099))
+            .await
+            .expect("request unknown path");
+        assert_eq!(not_found.status(), 404);
+
+        server.stop().await;
+    }
+
+    #[tokio::test]
+    async fn bind_conflict_returns_error() {
+        let server = PacServer::start(2098, "x".into()).await.expect("first bind");
+        let second = PacServer::start(2098, "y".into()).await;
+        assert!(second.is_err(), "same-port bind must fail");
+        server.stop().await;
+    }
+}
