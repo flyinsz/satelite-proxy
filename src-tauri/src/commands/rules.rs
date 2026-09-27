@@ -27,6 +27,9 @@ pub struct SaveRuleInput {
     /// Required when `target == chain`.
     #[serde(default)]
     pub chain_id: Option<String>,
+    /// Required when `target == pool`.
+    #[serde(default)]
+    pub pool_id: Option<String>,
 }
 
 /// Persisting is done; queue one globally debounced restart and return.
@@ -1279,6 +1282,23 @@ pub fn save_rule(
                 (None, None)
             };
 
+            let (pool_id, pool_name) = if matches!(effective_target, RuleTarget::Pool) {
+                let pid = input
+                    .pool_id
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .ok_or_else(|| {
+                        crate::error::AppError::Config("节点池出口需要选择一个节点池".into())
+                    })?;
+                let pool = store.pools.iter().find(|p| p.id == pid).ok_or_else(|| {
+                    crate::error::AppError::Config("指定的节点池不存在，请重新选择".into())
+                })?;
+                (Some(pool.id.clone()), Some(pool.name.clone()))
+            } else {
+                (None, None)
+            };
+
             let rule = if let Some(id) = input.id.clone() {
                 if let Some(existing) = set.rules.iter().find(|r| r.id == id) {
                     let mut r = existing.clone();
@@ -1292,6 +1312,8 @@ pub fn save_rule(
                     r.smart_exclude = smart_exclude;
                     r.chain_id = chain_id;
                     r.chain_name = chain_name;
+                    r.pool_id = pool_id;
+                    r.pool_name = pool_name;
                     if let Some(en) = input.enabled {
                         r.enabled = en;
                     }
@@ -1305,6 +1327,8 @@ pub fn save_rule(
                     r.smart_exclude = smart_exclude;
                     r.chain_id = chain_id;
                     r.chain_name = chain_name;
+                    r.pool_id = pool_id;
+                    r.pool_name = pool_name;
                     if let Some(en) = input.enabled {
                         r.enabled = en;
                     }
@@ -1318,7 +1342,12 @@ pub fn save_rule(
                 r.smart_exclude = smart_exclude;
                 r.chain_id = chain_id;
                 r.chain_name = chain_name;
-                if matches!(input.target, RuleTarget::Smart | RuleTarget::Chain) {
+                r.pool_id = pool_id;
+                r.pool_name = pool_name;
+                if matches!(
+                    input.target,
+                    RuleTarget::Smart | RuleTarget::Chain | RuleTarget::Pool
+                ) {
                     r.id = Rule::compute_id(
                         r.rule_type,
                         &r.payload,
@@ -1327,6 +1356,7 @@ pub fn save_rule(
                         &r.smart_include,
                         &r.smart_exclude,
                         r.chain_id.as_deref(),
+                        r.pool_id.as_deref(),
                     );
                 }
                 if let Some(en) = input.enabled {

@@ -587,7 +587,9 @@ fn rule_to_xray(
         // Xray has no `detour` chain concept — Chain routing is a
         // sing-box-only feature (see config/builder.rs). Degrade to the main
         // target, same as an empty Smart pool.
-        RuleTarget::Proxy | RuleTarget::Smart | RuleTarget::Chain => main_target.to_string(),
+        RuleTarget::Proxy | RuleTarget::Smart | RuleTarget::Chain | RuleTarget::Pool => {
+            main_target.to_string()
+        }
         RuleTarget::Node => {
             let pinned = node_id
                 .as_deref()

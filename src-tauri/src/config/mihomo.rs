@@ -609,7 +609,7 @@ fn rule_to_mihomo(
         // Clash/mihomo has no `detour` chain concept — Chain routing is a
         // sing-box-only feature (see builder.rs). Degrade to the main group,
         // same as an empty Smart pool.
-        RuleTarget::Proxy | RuleTarget::Chain => main_target.to_string(),
+        RuleTarget::Proxy | RuleTarget::Chain | RuleTarget::Pool => main_target.to_string(),
         RuleTarget::Smart => smart_group_tags
             .get(&rule.id)
             .cloned()

@@ -854,6 +854,9 @@ export interface RuleSetSummary {
   /** When strategy is `chain`: whole-set chain id. */
   chain_id?: string | null;
   chain_name?: string | null;
+  /** When strategy is `pool`: whole-set node-pool id. */
+  pool_id?: string | null;
+  pool_name?: string | null;
   dns_strategy: RuleSetDnsStrategy;
   /** Restorable by Reset: only the bundled remote rule sets. */
   resettable: boolean;
@@ -871,6 +874,7 @@ export type RuleSetStrategy =
   | "node"
   | "filter"
   | "chain"
+  | "pool"
   | "smart";
 export type RuleSetDnsStrategy = "local" | "domestic" | "remote";
 
@@ -923,13 +927,16 @@ export interface RuleSet {
   chain_id?: string | null;
   /** Snapshot name at pin time (stale UI when id missing). */
   chain_name?: string | null;
+  /** When strategy is `pool`: whole-set node-pool id. */
+  pool_id?: string | null;
+  pool_name?: string | null;
   dns_strategy: RuleSetDnsStrategy;
   remote?: RemoteRuleSetConfig | null;
   dns_rules: DnsRule[];
   rules: Rule[];
 }
 
-export type RuleTarget = "direct" | "proxy" | "block" | "node" | "smart" | "chain";
+export type RuleTarget = "direct" | "proxy" | "block" | "node" | "smart" | "chain" | "pool";
 
 export interface Rule {
   id: string;
@@ -950,6 +957,10 @@ export interface Rule {
   chain_id?: string | null;
   /** Snapshot name at save time (stale UI when id missing). */
   chain_name?: string | null;
+  /** When target is `pool`: node-pool id to route through. */
+  pool_id?: string | null;
+  /** Snapshot name at save time (stale UI when id missing). */
+  pool_name?: string | null;
 }
 
 /** How a [[NodePool]] selects its member nodes. */

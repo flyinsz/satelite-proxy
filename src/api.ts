@@ -1028,6 +1028,7 @@ export function saveRule(input: {
   smartInclude?: string[] | null;
   smartExclude?: string[] | null;
   chainId?: string | null;
+  poolId?: string | null;
 }) {
   return invoke<Rule>("save_rule", {
     input: {
@@ -1042,6 +1043,7 @@ export function saveRule(input: {
       smart_include: input.smartInclude ?? null,
       smart_exclude: input.smartExclude ?? null,
       chain_id: input.chainId ?? null,
+      pool_id: input.poolId ?? null,
     },
   });
 }

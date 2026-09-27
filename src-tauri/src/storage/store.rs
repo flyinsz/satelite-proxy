@@ -299,6 +299,8 @@ impl AppStore {
                     smart_exclude: Vec::new(),
                     chain_id: None,
                     chain_name: None,
+                    pool_id: None,
+                    pool_name: None,
                     dns_strategy: RuleSetDnsStrategy::Remote,
                     remote: None,
                     dns_rules: Vec::new(),
@@ -392,7 +394,7 @@ impl AppStore {
                         RuleTarget::Block => "block",
                         // Chain didn't exist when this v2 data was written;
                         // grouped with Node/Smart for the same reason those are.
-                        RuleTarget::Node | RuleTarget::Smart | RuleTarget::Chain => "smart",
+                        RuleTarget::Node | RuleTarget::Smart | RuleTarget::Chain | RuleTarget::Pool => "smart",
                     };
                     if let Some((_, rules)) = buckets.iter_mut().find(|(bucket, _)| *bucket == key)
                     {
@@ -482,6 +484,8 @@ impl AppStore {
                         smart_exclude: Vec::new(),
                         chain_id: None,
                         chain_name: None,
+                        pool_id: None,
+                        pool_name: None,
                         dns_strategy: match key {
                             "direct" => RuleSetDnsStrategy::Local,
                             "smart" => RuleSetDnsStrategy::Domestic,
@@ -524,6 +528,7 @@ impl AppStore {
                         | RuleSetStrategy::Node
                         | RuleSetStrategy::Filter
                         | RuleSetStrategy::Chain
+                        | RuleSetStrategy::Pool
                         | RuleSetStrategy::Smart => RuleSetDnsStrategy::Remote,
                     });
 
@@ -554,6 +559,8 @@ impl AppStore {
                         smart_exclude: Vec::new(),
                         chain_id: None,
                         chain_name: None,
+                        pool_id: None,
+                        pool_name: None,
                     });
                     next_ord += 10;
                 }
@@ -1314,6 +1321,8 @@ impl AppStore {
                 smart_exclude: s.smart_exclude.clone(),
                 chain_id: s.chain_id.clone(),
                 chain_name: s.chain_name.clone(),
+                pool_id: s.pool_id.clone(),
+                pool_name: s.pool_name.clone(),
                 dns_strategy: s.dns_strategy,
                 resettable: is_builtin_remote_id(&s.id),
                 remote: s.remote.clone(),
@@ -1667,6 +1676,36 @@ impl AppStore {
         let pool = crate::domain::NodePool::new(n, mode);
         self.pools.push(pool.clone());
         Ok(pool)
+    }
+
+    /// Seed the built-in region node pools once (idempotent, matched by name).
+    ///
+    /// These are keyword pools — members resolve against the live node list on
+    /// every config build, so they survive subscription refreshes. Returns the
+    /// number of pools created (0 on a second run).
+    pub fn seed_builtin_node_pools(&mut self) -> usize {
+        let specs: &[(&str, &[&str], &[&str])] = &[
+            ("香港节点", &["香港", "HK"], &[]),
+            ("新加坡节点", &["新加坡", "SG"], &[]),
+            ("美国节点", &["美国", "US"], &[]),
+            ("其他节点", &[], &["香港", "HK", "新加坡", "SG", "美国", "US"]),
+        ];
+        let mut created = 0;
+        for (name, include, exclude) in specs {
+            if self.pools.iter().any(|p| p.name == *name) {
+                continue;
+            }
+            let pool = crate::domain::NodePool::new(
+                name,
+                crate::domain::PoolMode::Keyword {
+                    include: include.iter().map(|s| s.to_string()).collect(),
+                    exclude: exclude.iter().map(|s| s.to_string()).collect(),
+                },
+            );
+            self.pools.push(pool);
+            created += 1;
+        }
+        created
     }
 
     pub fn update_pool(
@@ -4386,6 +4425,8 @@ mod tests {
             smart_exclude: Vec::new(),
             chain_id: None,
             chain_name: None,
+            pool_id: None,
+            pool_name: None,
             dns_strategy: Default::default(),
             remote: None,
             dns_rules: Vec::new(),

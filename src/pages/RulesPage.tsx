@@ -276,6 +276,7 @@ export function RulesPage({ embedded = false }: Props) {
   const [smartInclude, setSmartInclude] = useState("");
   const [smartExclude, setSmartExclude] = useState("");
   const [chainId, setChainId] = useState<string>("");
+  const [poolId, setPoolId] = useState<string>("");
   const [chains, setChains] = useState<ProxyChain[]>([]);
   const [nodes, setNodes] = useState<ProxyNode[]>([]);
   const [pools, setPools] = useState<NodePool[]>([]);
@@ -325,7 +326,9 @@ export function RulesPage({ embedded = false }: Props) {
    *  always shows what's actually in effect. "mixed" is a display-only
    *  sentinel for RuleSetStrategy's per-rule "smart" strategy — it is not a
    *  settable RuleTarget, so it can never be the value the user picked. */
-  const [editSetRouteTarget, setEditSetRouteTarget] = useState<RuleTarget | "mixed">("proxy");
+  const [editSetRouteTarget, setEditSetRouteTarget] = useState<
+    Exclude<RuleTarget, "pool"> | "mixed"
+  >("proxy");
   /** Full node selection for the edit modal's 指定 picker: 1 pick = classic
    *  single pin, 2+ = whole-set explicit pool. */
   const [editSetNodeIds, setEditSetNodeIds] = useState<string[]>([]);
@@ -580,6 +583,12 @@ export function RulesPage({ embedded = false }: Props) {
     for (const c of chains) m.set(c.id, c);
     return m;
   }, [chains]);
+
+  const poolById = useMemo(() => {
+    const m = new Map<string, NodePool>();
+    for (const p of pools) m.set(p.id, p);
+    return m;
+  }, [pools]);
 
   const filteredNodes = useMemo(() => {
     const q = nodeQuery.trim().toLowerCase();
@@ -875,6 +884,7 @@ export function RulesPage({ embedded = false }: Props) {
       { value: "node", label: t("rules.targetNode") },
       { value: "smart", label: t("rules.targetSmart") },
       { value: "chain", label: t("rules.targetChain") },
+      { value: "pool", label: t("rules.targetPool") },
     ],
     [t],
   );
@@ -918,9 +928,11 @@ export function RulesPage({ embedded = false }: Props) {
             ? t("rules.strategyNode")
             : s === "filter"
               ? t("rules.strategyFilter")
-              : s === "chain"
-                ? t("rules.targetChain")
-                : t("rules.strategySmart");
+          : s === "chain"
+            ? t("rules.targetChain")
+            : s === "pool"
+              ? t("rules.targetPool")
+              : t("rules.strategySmart");
   }
 
   /** Whether editSetRouteTarget-and-friends actually differ from the set's
@@ -1118,10 +1130,12 @@ export function RulesPage({ embedded = false }: Props) {
     setSmartInclude((r.smart_include ?? []).join(" "));
     setSmartExclude((r.smart_exclude ?? []).join(" "));
     setChainId(r.chain_id ?? "");
+    setPoolId(r.pool_id ?? "");
     setEnabled(r.enabled);
     setEditOpen(true);
     void ensureNodesLoaded();
     void ensureChainsLoaded();
+    void ensurePoolsLoaded();
   }
 
   /** Save (button-only — the form itself never submits). One textarea entry
@@ -1150,6 +1164,10 @@ export function RulesPage({ embedded = false }: Props) {
       setError(t("rules.needChain"));
       return;
     }
+    if (effectiveTarget === "pool" && !poolId.trim()) {
+      setError(t("rules.needPool"));
+      return;
+    }
     // Order-preserving dedupe + per-type normalization (bare IPs → CIDR).
     const entries = [
       ...new Set(
@@ -1174,6 +1192,7 @@ export function RulesPage({ embedded = false }: Props) {
           smartInclude: effectiveTarget === "smart" ? parseKeywords(smartInclude) : null,
           smartExclude: effectiveTarget === "smart" ? parseKeywords(smartExclude) : null,
           chainId: effectiveTarget === "chain" ? chainId : null,
+          poolId: effectiveTarget === "pool" ? poolId : null,
         });
       }
       setEditOpen(false);
@@ -1469,7 +1488,7 @@ export function RulesPage({ embedded = false }: Props) {
     // "mixed" sentinel. RuleSetStrategy's "filter" is RuleTarget's "smart"
     // (same concept, different literal — see strategyLabel).
     setEditSetRouteTarget(
-      target.strategy === "smart"
+      target.strategy === "smart" || target.strategy === "pool"
         ? "mixed"
         : target.strategy === "filter"
           ? "smart"
@@ -2682,6 +2701,41 @@ export function RulesPage({ embedded = false }: Props) {
                   })}
                 </p>
               )}
+              {viewSet?.strategy === "smart" && target === "pool" && (
+                <div className="field rule-chain-pick">
+                  <span>{t("rules.pickPool")}</span>
+                  {pools.length === 0 ? (
+                    <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                      {t("rules.noPools")}
+                    </p>
+                  ) : (
+                    <SolidSelect
+                      value={poolId}
+                      onChange={setPoolId}
+                      aria-label={t("rules.pickPool")}
+                      options={[
+                        { value: "", label: t("rules.needPool") },
+                        ...(poolId && !poolById.has(poolId)
+                          ? [
+                              {
+                                value: poolId,
+                                label: t("rules.poolStaleLabel", {
+                                  name: editRule?.pool_name ?? poolId,
+                                }),
+                              },
+                            ]
+                          : []),
+                        ...pools.map((p) => ({ value: p.id, label: p.name })),
+                      ]}
+                    />
+                  )}
+                  {poolId && !poolById.has(poolId) && (
+                    <p className="banner error" style={{ margin: "8px 0 0" }}>
+                      {t("rules.poolStaleHint")}
+                    </p>
+                  )}
+                </div>
+              )}
               <label className="sys-proxy-row" style={{ border: "none", paddingTop: 0, marginTop: 0 }}>
                 <span>{t("rules.enabled")}</span>
                 <GlassSwitchControl
@@ -3263,7 +3317,9 @@ export function RulesPage({ embedded = false }: Props) {
                 <GlassSeg
                   value={editSetRouteTarget}
                   ariaLabel={t("rules.batchRouteLabel")}
-                  onChange={(value) => setEditSetRouteTarget(value as RuleTarget | "mixed")}
+                  onChange={(value) =>
+                    setEditSetRouteTarget(value as Exclude<RuleTarget, "pool"> | "mixed")
+                  }
                   options={[
                     { value: "mixed", label: t("rules.strategySmart") },
                     { value: "proxy", label: t("rules.targetProxy") },

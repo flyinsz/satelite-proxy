@@ -1019,6 +1019,8 @@ mod tests {
             smart_exclude: Vec::new(),
             chain_id: None,
             chain_name: None,
+            pool_id: None,
+            pool_name: None,
             dns_strategy,
             remote: None,
             dns_rules: Vec::new(),

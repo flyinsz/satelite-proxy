@@ -39,25 +39,27 @@ pub enum RuleTarget {
     Smart,
     /// Route through a named multi-hop chain (`chain_id` on [`Rule`]).
     Chain,
+    /// Route through a named node pool (`pool_id` on [`Rule`]).
+    Pool,
 }
 
 impl RuleTarget {
     pub fn outbound_tag(self) -> &'static str {
         match self {
             Self::Direct => "direct",
-            // Node/Smart/Chain resolve to a dynamic tag via
+            // Node/Smart/Chain/Pool resolve to a dynamic tag via
             // `resolve_rule_outbound` in the config builder; "proxy" here is
             // only the static fallback used before that resolution runs.
-            Self::Proxy | Self::Node | Self::Smart | Self::Chain => "proxy",
+            Self::Proxy | Self::Node | Self::Smart | Self::Chain | Self::Pool => "proxy",
             Self::Block => "block",
         }
     }
 
-    /// Clash-compatible third column (NODE/SMART/CHAIN export as PROXY).
+    /// Clash-compatible third column (NODE/SMART/CHAIN/POOL export as PROXY).
     pub fn clash_token(self) -> &'static str {
         match self {
             Self::Direct => "DIRECT",
-            Self::Proxy | Self::Node | Self::Smart | Self::Chain => "PROXY",
+            Self::Proxy | Self::Node | Self::Smart | Self::Chain | Self::Pool => "PROXY",
             Self::Block => "REJECT",
         }
     }
@@ -91,12 +93,18 @@ pub struct Rule {
     /// Snapshot of chain display name at save time (for stale-chain UI).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain_name: Option<String>,
+    /// When `target == Pool`: stable id of the [`crate::domain::NodePool`] to route through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_id: Option<String>,
+    /// Snapshot of node-pool display name at save time (for stale-pool UI).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_name: Option<String>,
 }
 
 impl Rule {
     pub fn new(rule_type: RuleType, payload: String, target: RuleTarget, ord: i32) -> Self {
         let payload = payload.trim().to_string();
-        let id = Self::compute_id(rule_type, &payload, target, None, &[], &[], None);
+        let id = Self::compute_id(rule_type, &payload, target, None, &[], &[], None, None);
         Self {
             id,
             ord,
@@ -110,6 +118,8 @@ impl Rule {
             smart_exclude: Vec::new(),
             chain_id: None,
             chain_name: None,
+            pool_id: None,
+            pool_name: None,
         }
     }
 
@@ -132,6 +142,7 @@ impl Rule {
         smart_include: &[String],
         smart_exclude: &[String],
         chain_id: Option<&str>,
+        pool_id: Option<&str>,
     ) -> String {
         let mut h = Sha256::new();
         h.update(rule_type.as_str().as_bytes());
@@ -157,6 +168,12 @@ impl Rule {
             if let Some(cid) = chain_id.filter(|s| !s.is_empty()) {
                 h.update(b"|c");
                 h.update(cid.as_bytes());
+            }
+        }
+        if matches!(target, RuleTarget::Pool) {
+            if let Some(pid) = pool_id.filter(|s| !s.is_empty()) {
+                h.update(b"|p");
+                h.update(pid.as_bytes());
             }
         }
         hex::encode(&h.finalize()[..12])
@@ -274,6 +291,12 @@ pub struct RuleSet {
     /// Snapshot of chain display name at pin time (for stale-chain UI).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain_name: Option<String>,
+    /// When `strategy == Pool`: stable id of the [`crate::domain::NodePool`] the whole set routes through.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_id: Option<String>,
+    /// Snapshot of node-pool display name at pin time (for stale-pool UI).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_name: Option<String>,
     /// Whole-set DNS resolver policy, independent from the route strategy.
     #[serde(default)]
     pub dns_strategy: RuleSetDnsStrategy,
@@ -310,6 +333,8 @@ pub enum RuleSetStrategy {
     Filter,
     /// Whole set routed through a named multi-hop chain (`chain_id` on [`RuleSet`]).
     Chain,
+    /// Whole set routed through a named node pool (`pool_id` on [`RuleSet`]).
+    Pool,
     /// Per-item route/DNS decisions (emergent "Mixed" tag).
     Smart,
 }
@@ -342,6 +367,7 @@ impl RuleSetStrategy {
             RuleTarget::Node => Self::Node,
             RuleTarget::Smart => Self::Filter,
             RuleTarget::Chain => Self::Chain,
+            RuleTarget::Pool => Self::Pool,
         }
     }
 
@@ -350,7 +376,7 @@ impl RuleSetStrategy {
             Self::Proxy => Some(RuleTarget::Proxy),
             Self::Direct => Some(RuleTarget::Direct),
             Self::Block => Some(RuleTarget::Block),
-            Self::Node | Self::Filter | Self::Smart | Self::Chain => None,
+            Self::Node | Self::Filter | Self::Smart | Self::Chain | Self::Pool => None,
         }
     }
 
@@ -358,7 +384,7 @@ impl RuleSetStrategy {
     /// Block has no editable DNS policy because it always emits DNS reject.
     pub fn recommended_dns_strategy(self) -> Option<RuleSetDnsStrategy> {
         match self {
-            Self::Proxy | Self::Node | Self::Filter | Self::Smart | Self::Chain => {
+            Self::Proxy | Self::Node | Self::Filter | Self::Smart | Self::Chain | Self::Pool => {
                 Some(RuleSetDnsStrategy::Remote)
             }
             Self::Direct => Some(RuleSetDnsStrategy::Local),
@@ -467,6 +493,8 @@ impl RuleSet {
             smart_exclude: Vec::new(),
             chain_id: None,
             chain_name: None,
+            pool_id: None,
+            pool_name: None,
             dns_strategy: RuleSetDnsStrategy::Remote,
             remote: None,
             dns_rules: Vec::new(),
@@ -572,6 +600,10 @@ pub struct RuleSetSummary {
     pub chain_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chain_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pool_name: Option<String>,
     pub dns_strategy: RuleSetDnsStrategy,
     /// Restorable by Reset: only the bundled remote rule sets.
     #[serde(default)]
