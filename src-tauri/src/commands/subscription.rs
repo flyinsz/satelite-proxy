@@ -119,6 +119,39 @@ pub fn list_subscriptions(state: State<'_, AppState>) -> Result<Vec<Subscription
         .map_err(|e| e.to_string())
 }
 
+/// One clash `rule-provider` from a subscription, tagged with its owning
+/// subscription for the "import as rule set" picker.
+#[derive(Debug, Clone, Serialize)]
+pub struct SubscriptionRuleProvider {
+    pub subscription_id: String,
+    pub subscription_name: String,
+    pub provider: crate::domain::ClashRuleProvider,
+}
+
+/// All clash `rule-providers` discovered across subscriptions (custom
+/// profiles excluded — they are full configs, not node subscriptions).
+#[tauri::command(async)]
+pub fn list_subscription_rule_providers(
+    state: State<'_, AppState>,
+) -> Result<Vec<SubscriptionRuleProvider>, String> {
+    state
+        .with_store(|store| {
+            Ok(store
+                .subscriptions
+                .iter()
+                .filter(|s| s.source.contributes_nodes())
+                .flat_map(|s| {
+                    s.rule_providers.iter().map(|p| SubscriptionRuleProvider {
+                        subscription_id: s.id.clone(),
+                        subscription_name: s.name.clone(),
+                        provider: p.clone(),
+                    })
+                })
+                .collect())
+        })
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command(async)]
 pub fn list_subscription_urls(
     state: State<'_, AppState>,

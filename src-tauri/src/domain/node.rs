@@ -684,6 +684,9 @@ pub struct ParseResult {
     /// Skipped entries (unsupported type / invalid fields).
     pub skipped: Vec<SkippedProxy>,
     pub format: SubscriptionFormat,
+    /// Clash `rule-providers` found in the body (empty for non-clash inputs).
+    #[serde(default)]
+    pub rule_providers: Vec<crate::domain::ClashRuleProvider>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

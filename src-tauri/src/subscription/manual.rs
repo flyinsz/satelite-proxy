@@ -83,6 +83,7 @@ pub fn parse_manual_draft(
             nodes: vec![node],
             skipped: Vec::new(),
             format: SubscriptionFormat::Manual,
+            rule_providers: Vec::new(),
         }),
         Err(reason) => {
             if reason.contains("unsupported") {

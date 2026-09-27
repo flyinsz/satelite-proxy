@@ -751,6 +751,7 @@ mod tests {
             nodes: vec![mk("pass-a"), mk("pass-b")],
             skipped: vec![],
             format: SubscriptionFormat::UriList,
+            rule_providers: Vec::new(),
         };
         let outcome = build_outcome(
             "test-sub".into(),
@@ -807,6 +808,7 @@ mod tests {
                     nodes: vec![mk(name)],
                     skipped: vec![],
                     format: SubscriptionFormat::UriList,
+                    rule_providers: Vec::new(),
                 },
                 None,
                 false,
@@ -836,6 +838,7 @@ mod tests {
                 nodes: vec![mk("HK-01-renamed-again")],
                 skipped: vec![],
                 format: SubscriptionFormat::UriList,
+                rule_providers: Vec::new(),
             },
             Some(before.subscription.id.clone()),
             false,
@@ -868,6 +871,7 @@ mod tests {
             auto_update_interval_min: 1440,
             traffic: None,
             user_agent: None,
+            rule_providers: Vec::new(),
         });
         let second = unique_subscription_id(&store, subscription_id(&source));
         assert_ne!(second, base);
@@ -1151,6 +1155,7 @@ pub fn import_from_custom(
         nodes: Vec::new(),
         skipped: Vec::new(),
         format: crate::domain::SubscriptionFormat::Manual,
+        rule_providers: Vec::new(),
     };
     let mut outcome = build_outcome(display_name, source, parsed, existing_id, false);
     outcome.subscription.auto_update = false;
@@ -1260,6 +1265,7 @@ fn build_outcome(
         auto_update_interval_min: 1440,
         traffic: remark_traffic,
         user_agent: None,
+        rule_providers: parsed.rule_providers,
     };
 
     // Re-hash node ids on the subscription id + backend identity

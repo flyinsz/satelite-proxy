@@ -21,6 +21,7 @@ import {
   listPools,
   listRemoteRuleItems,
   listRuleSets,
+  listSubscriptionRuleProviders,
   peekSettings,
   removeRule,
   refreshRemoteRuleSet,
@@ -56,6 +57,7 @@ import type {
   RemoteRulePage,
   RuleTarget,
   RuleType,
+  SubscriptionRuleProvider,
 } from "../types";
 
 type RouteFinal = "proxy" | "direct" | "block";
@@ -275,6 +277,11 @@ export function RulesPage({ embedded = false }: Props) {
   const [pools, setPools] = useState<NodePool[]>([]);
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
+
+  /** "Import from subscription" picker state. */
+  const [importOpen, setImportOpen] = useState(false);
+  const [importProviders, setImportProviders] = useState<SubscriptionRuleProvider[]>([]);
+  const [importBusyNames, setImportBusyNames] = useState<Set<string>>(new Set());
 
   /** New rule-set modal (window.prompt is unreliable in Tauri WebView). */
   const [newSetOpen, setNewSetOpen] = useState(false);
@@ -1320,6 +1327,67 @@ export function RulesPage({ embedded = false }: Props) {
     }
   }
 
+  /** Map a clash suggested target to the app's RuleTarget. */
+  function providerTarget(target: string): RuleTarget {
+    if (target === "direct") return "direct";
+    if (target === "reject") return "block";
+    return "proxy";
+  }
+
+  /** Map a clash refresh interval (seconds) to the app's coarse buckets. */
+  function providerInterval(
+    seconds?: number | null,
+  ): "disabled" | "1h" | "12h" | "24h" {
+    if (!seconds || seconds <= 0) return "disabled";
+    if (seconds >= 86400) return "24h";
+    if (seconds >= 43200) return "12h";
+    return "1h";
+  }
+
+  async function openImportProviders() {
+    setError(null);
+    try {
+      setImportProviders(await listSubscriptionRuleProviders());
+      setImportOpen(true);
+    } catch (err) {
+      setError(typeof err === "string" ? err : String(err));
+    }
+  }
+
+  async function importProvider(p: SubscriptionRuleProvider) {
+    setImportBusyNames((current) => new Set(current).add(p.provider.name));
+    setError(null);
+    try {
+      const set = await createRuleSet(
+        p.provider.name,
+        p.provider.url,
+        providerTarget(p.provider.suggested_target),
+        providerInterval(p.provider.interval),
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+      );
+      // Download → convert (clash → sing-box source) → cache → enable.
+      await refreshRemoteRuleSet(set.id);
+      await setRuleSetEnabled(set.id, true);
+      await reloadSets();
+      setImportProviders((current) =>
+        current.filter((x) => x.provider.name !== p.provider.name),
+      );
+    } catch (err) {
+      setError(typeof err === "string" ? err : String(err));
+    } finally {
+      setImportBusyNames((current) => {
+        const next = new Set(current);
+        next.delete(p.provider.name);
+        return next;
+      });
+    }
+  }
+
   async function onRefreshRemoteSet(id: string) {
     setRemoteBusyIds((current) => new Set(current).add(id));
     setError(null);
@@ -1967,6 +2035,13 @@ export function RulesPage({ embedded = false }: Props) {
               title={t("rules.resetAllBuiltinHint")}
             >
               {t("rules.resetAllBuiltin")}
+            </GlassButton>
+            <GlassButton
+              icon="⇩"
+              onClick={() => void openImportProviders()}
+              title={t("rules.importFromSubHint")}
+            >
+              {t("rules.importFromSub")}
             </GlassButton>
           </div>
           <div className="ruleset-final" title={t("rules.finalHint")}>
@@ -2887,6 +2962,83 @@ export function RulesPage({ embedded = false }: Props) {
                 </GlassButton>
               </footer>
             </form>
+          </div>
+        </div>
+      )}
+
+      {importOpen && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setImportOpen(false)}
+        >
+          <div
+            className="modal rules-form-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="modal-header">
+              <h2>{t("rules.importTitle")}</h2>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => setImportOpen(false)}
+                aria-label={t("common.close")}
+              >
+                ×
+              </button>
+            </header>
+            <div className="modal-body">
+              <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                {t("rules.importHint")}
+              </p>
+              {importProviders.length === 0 ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  {t("rules.importEmpty")}
+                </p>
+              ) : (
+                importProviders.map((p) => {
+                  const busy = importBusyNames.has(p.provider.name);
+                  return (
+                    <div
+                      key={`${p.subscription_id}:${p.provider.name}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.6rem",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 500 }}>{p.provider.name}</div>
+                        <div
+                          className="muted"
+                          style={{
+                            fontSize: 12,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {p.subscription_name} · {p.provider.behavior} ·{" "}
+                          {p.provider.url}
+                        </div>
+                      </div>
+                      <GlassButton
+                        variant="primary"
+                        disabled={busy}
+                        onClick={() => void importProvider(p)}
+                      >
+                        {busy ? t("rules.importBusy") : t("rules.importAction")}
+                      </GlassButton>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <footer className="modal-footer">
+              <GlassButton variant="primary" onClick={() => setImportOpen(false)}>
+                {t("common.close")}
+              </GlassButton>
+            </footer>
           </div>
         </div>
       )}

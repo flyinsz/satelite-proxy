@@ -302,6 +302,46 @@ impl SubscriptionTraffic {
     }
 }
 
+/// One clash `rule-providers` entry discovered in a subscription body.
+///
+/// These are clash-format rule sets (not sing-box source/binary), so they
+/// are not usable by sing-box until converted (see `clash_ruleset`). The
+/// subscription parser records them so the UI can offer a one-click "import
+/// as rule set" that downloads + converts + enables them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClashRuleProvider {
+    /// Provider name (also the `RULE-SET,<name>,...` key).
+    pub name: String,
+    /// `domain` | `ipcidr` | `classical`.
+    pub behavior: String,
+    /// Remote URL the rule set is fetched from.
+    pub url: String,
+    /// Refresh interval in seconds (clash `interval`), when present.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval: Option<u64>,
+    /// Inferred default route target from `rules:` (`proxy`/`direct`/`reject`).
+    /// Defaults to `proxy` when the subscription has no `RULE-SET` reference.
+    #[serde(default = "default_provider_target")]
+    pub suggested_target: String,
+}
+
+fn default_provider_target() -> String {
+    "proxy".into()
+}
+
+impl ClashRuleProvider {
+    /// Map a clash route token (`PROXY`/`DIRECT`/`REJECT` and case variants)
+    /// to the normalized target string this app stores.
+    pub fn normalize_target(token: &str) -> String {
+        match token.trim().to_ascii_uppercase().as_str() {
+            "DIRECT" => "direct",
+            "REJECT" | "REJECT-DROP" => "reject",
+            _ => "proxy",
+        }
+        .to_string()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subscription {
     pub id: String,
@@ -333,6 +373,11 @@ pub struct Subscription {
     /// built-in Clash-like default (see `subscription_user_agent`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
+    /// Clash `rule-providers` discovered at last parse (empty for non-clash
+    /// inputs). Persisted so the UI can offer "import as rule set" without
+    /// re-fetching the body.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_providers: Vec<ClashRuleProvider>,
 }
 
 fn default_auto_update_interval_min() -> u32 {
@@ -401,6 +446,9 @@ pub struct SubscriptionDetail {
     /// Custom User-Agent for URL fetches (empty = built-in default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
+    /// Clash `rule-providers` discovered at last parse.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rule_providers: Vec<ClashRuleProvider>,
 }
 
 impl Subscription {
@@ -474,6 +522,7 @@ impl Subscription {
             auto_update_interval_min: self.auto_update_interval_min.max(1),
             traffic: self.traffic.clone(),
             user_agent: self.user_agent.clone(),
+            rule_providers: self.rule_providers.clone(),
         };
         match &self.source {
             SubscriptionSource::Url { url } => SubscriptionDetail {

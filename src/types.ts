@@ -183,6 +183,26 @@ export interface SubscriptionDetail {
   traffic?: SubscriptionTraffic | null;
   /** Custom User-Agent for URL fetches. Empty/absent = built-in default. */
   user_agent?: string | null;
+  /** Clash rule-providers discovered at last parse. */
+  rule_providers?: ClashRuleProvider[];
+}
+
+/** One clash `rule-providers` entry discovered in a subscription body. */
+export interface ClashRuleProvider {
+  name: string;
+  /** domain | ipcidr | classical */
+  behavior: string;
+  url: string;
+  interval?: number | null;
+  /** proxy | direct | reject */
+  suggested_target: string;
+}
+
+/** A clash rule-provider tagged with its owning subscription. */
+export interface SubscriptionRuleProvider {
+  subscription_id: string;
+  subscription_name: string;
+  provider: ClashRuleProvider;
 }
 
 export interface SubscriptionUrlEntry {

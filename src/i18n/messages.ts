@@ -806,6 +806,14 @@ const en = {
   "rules.resetAllBuiltinHint":
     "Restore the three built-in rule sets to factory; user rule sets are not affected",
   "rules.resetAllBuiltin": "Reset all",
+  "rules.importFromSub": "Import from subscription",
+  "rules.importFromSubHint": "Import rule-providers from clash subscriptions",
+  "rules.importTitle": "Import rule sets from subscription",
+  "rules.importHint":
+    "Pull clash rule-providers into rule sets; auto-converted to sing-box source (GEO rules are skipped).",
+  "rules.importEmpty": "No rule-providers in your subscriptions",
+  "rules.importBusy": "Importing…",
+  "rules.importAction": "Import",
   "rules.downloadingTooltip": "Downloading remote rule set",
   "rules.enableEmptyHint": "No effective rules yet — cannot enable",
   "rules.remoteSrsInert":
@@ -1994,6 +2002,14 @@ const zh: Record<MessageKey, string> = {
     "将「{name}」恢复为出厂设置？\n当前对该集的编辑（名称、URL、路由、更新周期）会丢失。\n（重启程序不会自动重置，只会保留你的修改。）",
   "rules.resetAllBuiltinHint": "将三条内置规则集恢复为出厂设置，不影响用户规则集",
   "rules.resetAllBuiltin": "重置",
+  "rules.importFromSub": "从订阅导入",
+  "rules.importFromSubHint": "从 clash 订阅导入规则集",
+  "rules.importTitle": "从订阅导入规则集",
+  "rules.importHint":
+    "把 clash 订阅的 rule-providers 拉取为规则集，自动转成 sing-box 格式（GEO 规则会跳过）。",
+  "rules.importEmpty": "订阅里没有可导入的规则集",
+  "rules.importBusy": "导入中…",
+  "rules.importAction": "导入",
   "rules.downloadingTooltip": "正在下载远程规则集",
   "rules.enableEmptyHint": "暂无可生效的规则，无法启用",
   "rules.remoteSrsInert":

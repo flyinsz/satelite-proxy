@@ -286,6 +286,32 @@ async fn refresh_inner(app: &AppHandle, id: &str) -> Result<DownloadedRule, Stri
         Ok(bytes) => bytes,
         Err(error) => return fail(app, id, error),
     };
+    // Clash rule-provider bodies (from a clash subscription) are converted to
+    // sing-box `source` JSON up front, so the existing source/binary detection
+    // and validation below run unchanged. GEO entries are skipped and logged.
+    let bytes = if let Ok(text) = std::str::from_utf8(&bytes) {
+        if crate::clash_ruleset::looks_like_clash_ruleset(text) {
+            match crate::clash_ruleset::convert_clash_ruleset(text) {
+                Ok(converted) => {
+                    if converted.skipped_geo > 0 {
+                        crate::app_log::warn(
+                            "remote_rules",
+                            format!(
+                                "rule set {id} converted from clash: {} matchers, {} GEO entries skipped",
+                                converted.rule_count, converted.skipped_geo
+                            ),
+                        );
+                    }
+                    converted.json.into_bytes()
+                }
+                Err(error) => return fail(app, id, error),
+            }
+        } else {
+            bytes
+        }
+    } else {
+        bytes
+    };
     let (format, source_scan, binary_scan) = match validate_source(&bytes) {
         Ok((count, contains_ip)) => (RuleSetFileFormat::Source, Some((count, contains_ip)), None),
         Err(_) if bytes.starts_with(b"SRS") => {

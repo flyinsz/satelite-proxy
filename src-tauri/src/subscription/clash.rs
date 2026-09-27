@@ -1,8 +1,8 @@
 //! Parse Clash YAML `proxies:` list into normalized [`ProxyNode`]s.
 
 use crate::domain::{
-    ParseResult, Protocol, ProtocolConfig, ProxyNode, ShadowTlsOpts, SkippedProxy,
-    SubscriptionFormat, TlsConfig, Transport,
+    ClashRuleProvider, ParseResult, Protocol, ProtocolConfig, ProxyNode, ShadowTlsOpts,
+    SkippedProxy, SubscriptionFormat, TlsConfig, Transport,
 };
 use crate::error::{AppError, AppResult};
 use crate::subscription::yaml_util::{
@@ -11,6 +11,7 @@ use crate::subscription::yaml_util::{
 };
 use serde::Deserialize as _;
 use serde_yaml::Value;
+use std::collections::HashMap;
 
 /// Parse a full Clash config document or a bare proxies list.
 ///
@@ -25,12 +26,14 @@ pub fn parse_clash_yaml(content: &str) -> AppResult<ParseResult> {
     }
 
     let mut proxies: Vec<Value> = Vec::new();
+    let mut rule_providers: Vec<ClashRuleProvider> = Vec::new();
     for document in serde_yaml::Deserializer::from_str(content) {
         let root = Value::deserialize(document)
             .map_err(|e| AppError::SubscriptionParse(format!("invalid yaml: {e}")))?;
         if let Some(list) = extract_proxies_seq(&root) {
             proxies.extend(list.iter().cloned());
         }
+        merge_rule_providers(&mut rule_providers, &root);
     }
 
     if proxies.is_empty() {
@@ -71,6 +74,7 @@ pub fn parse_clash_yaml(content: &str) -> AppResult<ParseResult> {
         nodes,
         skipped,
         format: SubscriptionFormat::ClashYaml,
+        rule_providers,
     })
 }
 
@@ -125,6 +129,100 @@ fn extract_proxies_seq(root: &Value) -> Option<&Vec<Value>> {
             .and_then(|v| v.as_sequence()),
         _ => None,
     }
+}
+
+/// Merge `rule-providers` from one document into `acc`. A provider with the
+/// same name in a later document wins (multi-doc subscriptions rarely
+/// overlap, but the last definition should be authoritative, matching Clash).
+fn merge_rule_providers(acc: &mut Vec<ClashRuleProvider>, root: &Value) {
+    for provider in extract_rule_providers(root) {
+        if let Some(existing) = acc.iter_mut().find(|p| p.name == provider.name) {
+            *existing = provider;
+        } else {
+            acc.push(provider);
+        }
+    }
+}
+
+/// Extract clash `rule-providers` from a document, inferring each one's
+/// suggested route target from any `RULE-SET,<name>,<target>` line in `rules:`.
+fn extract_rule_providers(root: &Value) -> Vec<ClashRuleProvider> {
+    let Some(map) = root.as_mapping() else {
+        return Vec::new();
+    };
+    let targets = extract_rule_set_targets(root);
+    let Some(providers) = map
+        .get(Value::String("rule-providers".into()))
+        .and_then(Value::as_mapping)
+    else {
+        return Vec::new();
+    };
+
+    providers
+        .iter()
+        .filter_map(|(key, value)| {
+            let name = key.as_str()?.trim();
+            if name.is_empty() {
+                return None;
+            }
+            let m = value.as_mapping()?;
+            let behavior = m
+                .get(Value::String("behavior".into()))
+                .and_then(Value::as_str)
+                .map(str::to_ascii_lowercase)
+                .unwrap_or_else(|| "domain".into());
+            let url = m
+                .get(Value::String("url".into()))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())?
+                .to_string();
+            let interval = m
+                .get(Value::String("interval".into()))
+                .and_then(Value::as_u64);
+            let suggested_target = targets
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| "proxy".into());
+            Some(ClashRuleProvider {
+                name: name.to_string(),
+                behavior,
+                url,
+                interval,
+                suggested_target,
+            })
+        })
+        .collect()
+}
+
+/// Map each `RULE-SET,<name>,<target>` in `rules:` to its normalized target.
+fn extract_rule_set_targets(root: &Value) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    let Some(map) = root.as_mapping() else {
+        return out;
+    };
+    let Some(rules) = map
+        .get(Value::String("rules".into()))
+        .and_then(Value::as_sequence)
+    else {
+        return out;
+    };
+    for rule in rules {
+        let Some(line) = rule.as_str() else { continue };
+        let mut parts = line.split(',');
+        let kind = parts.next().unwrap_or("").trim();
+        if !kind.eq_ignore_ascii_case("RULE-SET") {
+            continue;
+        }
+        let name = parts.next().unwrap_or("").trim();
+        let target = parts.next().unwrap_or("").trim();
+        if name.is_empty() {
+            continue;
+        }
+        out.entry(name.to_string())
+            .or_insert_with(|| ClashRuleProvider::normalize_target(target));
+    }
+    out
 }
 
 fn parse_proxy_entry(value: &Value) -> Result<ProxyNode, String> {
@@ -1025,6 +1123,61 @@ fn parse_transport(map: &serde_yaml::Mapping) -> Result<Option<Transport>, Strin
 mod tests {
     use super::*;
     use crate::domain::{Protocol, ProtocolConfig};
+
+    #[test]
+    fn extracts_rule_providers_with_inferred_targets() {
+        let yaml = "proxies:
+  - name: A
+    type: ss
+    server: a.example.com
+    port: 8388
+    cipher: aes-256-gcm
+    password: x
+rule-providers:
+  ads:
+    type: http
+    behavior: domain
+    url: https://example.com/ads.txt
+    interval: 86400
+  cn-cidr:
+    type: http
+    behavior: ipcidr
+    url: https://example.com/cn-cidr.txt
+rules:
+  - RULE-SET,ads,REJECT
+  - DOMAIN-SUFFIX,example.com,PROXY
+";
+        let parsed = parse_clash_yaml(yaml).unwrap();
+        assert_eq!(parsed.nodes.len(), 1);
+        let providers = &parsed.rule_providers;
+        assert_eq!(providers.len(), 2);
+
+        let ads = providers.iter().find(|p| p.name == "ads").unwrap();
+        assert_eq!(ads.behavior, "domain");
+        assert_eq!(ads.url, "https://example.com/ads.txt");
+        assert_eq!(ads.interval, Some(86400));
+        // RULE-SET,ads,REJECT → inferred target.
+        assert_eq!(ads.suggested_target, "reject");
+
+        // No RULE-SET reference → default proxy.
+        let cidr = providers.iter().find(|p| p.name == "cn-cidr").unwrap();
+        assert_eq!(cidr.behavior, "ipcidr");
+        assert_eq!(cidr.suggested_target, "proxy");
+    }
+
+    #[test]
+    fn rule_providers_absent_for_plain_proxy_lists() {
+        let yaml = "proxies:
+  - name: A
+    type: ss
+    server: a.example.com
+    port: 8388
+    cipher: aes-256-gcm
+    password: x
+";
+        let parsed = parse_clash_yaml(yaml).unwrap();
+        assert!(parsed.rule_providers.is_empty());
+    }
 
     #[test]
     fn parsed_entries_carry_verbatim_raw_bodies() {

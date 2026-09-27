@@ -2,6 +2,7 @@ mod api;
 mod app_log;
 mod autostart;
 mod builtin_remote_rules;
+mod clash_ruleset;
 mod commands;
 mod config;
 mod conn_journal;
@@ -419,6 +420,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::list_subscriptions,
             commands::list_subscription_urls,
+            commands::list_subscription_rule_providers,
             commands::get_subscription,
             commands::get_subscription_raw_config,
             commands::get_subscription_core_support,

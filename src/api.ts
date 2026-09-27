@@ -47,6 +47,14 @@ export function listSubscriptionUrls() {
   return invoke<SubscriptionUrlEntry[]>("list_subscription_urls");
 }
 
+/** All clash rule-providers discovered across subscriptions (for the rules
+ *  page "import from subscription" picker). */
+export function listSubscriptionRuleProviders() {
+  return invoke<import("./types").SubscriptionRuleProvider[]>(
+    "list_subscription_rule_providers",
+  );
+}
+
 export function getSubscription(id: string) {
   return invoke<SubscriptionDetail>("get_subscription", { id });
 }
