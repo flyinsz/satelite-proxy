@@ -18,6 +18,150 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const STORE_BACKUP_NAME: &str = "store.backup.json";
 const MAX_CORRUPT_SNAPSHOTS: usize = 3;
 
+/// One region row, mirroring `src/nodeGroups.ts` REGIONS. The pool name is
+/// `flag + zh` + "节点"; detection is kept equivalent to the frontend so the
+/// region pools and the nodes page agree on a node's region.
+struct Region {
+    id: &'static str,
+    zh: &'static str,
+    flag: &'static str,
+    aliases: &'static [&'static str],
+}
+
+/// Mirrors `src/nodeGroups.ts` REGIONS (zh + flag + aliases; `en` unused by
+/// the backend pool names). Keep in sync with that table.
+const REGIONS: &[Region] = &[
+    Region { id: "HK", zh: "香港", flag: "🇭🇰", aliases: &["香港", "HKG", "hongkong"] },
+    Region { id: "TW", zh: "台湾", flag: "🇹🇼", aliases: &["台湾", "台北", "新北", "桃园", "高雄", "TWN", "taipei", "taiwan"] },
+    Region { id: "JP", zh: "日本", flag: "🇯🇵", aliases: &["东京", "大阪", "埼玉", "名古屋", "JPN", "tokyo", "osaka", "japan"] },
+    Region { id: "SG", zh: "新加坡", flag: "🇸🇬", aliases: &["狮城", "SGP", "singapore"] },
+    Region { id: "US", zh: "美国", flag: "🇺🇸", aliases: &["洛杉矶", "圣何塞", "西雅图", "纽约", "芝加哥", "凤凰城", "达拉斯", "硅谷", "弗吉尼亚", "费利蒙", "圣克拉拉", "波特兰", "USA", "united states", "america", "los angeles", "san jose", "seattle", "new york", "dallas", "chicago", "phoenix"] },
+    Region { id: "KR", zh: "韩国", flag: "🇰🇷", aliases: &["首尔", "春川", "KOR", "seoul", "korea"] },
+    Region { id: "GB", zh: "英国", flag: "🇬🇧", aliases: &["伦敦", "英伦", "UK", "GBR", "britain", "england", "london", "united kingdom"] },
+    Region { id: "DE", zh: "德国", flag: "🇩🇪", aliases: &["法兰克福", "柏林", "DEU", "germany", "frankfurt", "berlin"] },
+    Region { id: "FR", zh: "法国", flag: "🇫🇷", aliases: &["巴黎", "FRA", "france", "paris"] },
+    Region { id: "CA", zh: "加拿大", flag: "🇨🇦", aliases: &["多伦多", "温哥华", "CAN", "canada", "toronto", "vancouver"] },
+    Region { id: "AU", zh: "澳大利亚", flag: "🇦🇺", aliases: &["悉尼", "墨尔本", "AUS", "australia", "sydney", "melbourne"] },
+    Region { id: "NZ", zh: "新西兰", flag: "🇳🇿", aliases: &["NZL", "new zealand"] },
+    Region { id: "RU", zh: "俄罗斯", flag: "🇷🇺", aliases: &["莫斯科", "圣彼得堡", "RUS", "russia", "moscow"] },
+    Region { id: "IN", zh: "印度", flag: "🇮🇳", aliases: &["孟买", "IND", "india", "mumbai"] },
+    Region { id: "TR", zh: "土耳其", flag: "🇹🇷", aliases: &["伊斯坦布尔", "TUR", "turkey", "istanbul"] },
+    Region { id: "MY", zh: "马来西亚", flag: "🇲🇾", aliases: &["MYS", "malaysia"] },
+    Region { id: "TH", zh: "泰国", flag: "🇹🇭", aliases: &["曼谷", "THA", "thailand", "bangkok"] },
+    Region { id: "VN", zh: "越南", flag: "🇻🇳", aliases: &["VNM", "vietnam"] },
+    Region { id: "PH", zh: "菲律宾", flag: "🇵🇭", aliases: &["PHL", "philippines"] },
+    Region { id: "ID", zh: "印度尼西亚", flag: "🇮🇩", aliases: &["雅加达", "IDN", "indonesia", "jakarta"] },
+    Region { id: "BR", zh: "巴西", flag: "🇧🇷", aliases: &["BRA", "brazil"] },
+    Region { id: "AR", zh: "阿根廷", flag: "🇦🇷", aliases: &["ARG", "argentina"] },
+    Region { id: "NL", zh: "荷兰", flag: "🇳🇱", aliases: &["阿姆斯特丹", "NLD", "netherlands", "holland", "amsterdam"] },
+    Region { id: "ES", zh: "西班牙", flag: "🇪🇸", aliases: &["ESP", "spain"] },
+    Region { id: "IT", zh: "意大利", flag: "🇮🇹", aliases: &["米兰", "ITA", "italy", "milan"] },
+    Region { id: "CH", zh: "瑞士", flag: "🇨🇭", aliases: &["苏黎世", "CHE", "switzerland", "zurich"] },
+    Region { id: "SE", zh: "瑞典", flag: "🇸🇪", aliases: &["SWE", "sweden", "stockholm"] },
+    Region { id: "NO", zh: "挪威", flag: "🇳🇴", aliases: &["NOR", "norway"] },
+    Region { id: "FI", zh: "芬兰", flag: "🇫🇮", aliases: &["FIN", "finland"] },
+    Region { id: "DK", zh: "丹麦", flag: "🇩🇰", aliases: &["DNK", "denmark"] },
+    Region { id: "PL", zh: "波兰", flag: "🇵🇱", aliases: &["华沙", "POL", "poland", "warsaw"] },
+    Region { id: "UA", zh: "乌克兰", flag: "🇺🇦", aliases: &["UKR", "ukraine", "kyiv"] },
+    Region { id: "AE", zh: "阿联酋", flag: "🇦🇪", aliases: &["迪拜", "ARE", "uae", "emirates", "dubai"] },
+    Region { id: "SA", zh: "沙特", flag: "🇸🇦", aliases: &["利雅得", "SAU", "saudi"] },
+    Region { id: "IL", zh: "以色列", flag: "🇮🇱", aliases: &["ISR", "israel"] },
+    Region { id: "MX", zh: "墨西哥", flag: "🇲🇽", aliases: &["MEX", "mexico"] },
+    Region { id: "CL", zh: "智利", flag: "🇨🇱", aliases: &["CHL", "chile"] },
+    Region { id: "ZA", zh: "南非", flag: "🇿🇦", aliases: &["ZAF", "south africa"] },
+    Region { id: "EG", zh: "埃及", flag: "🇪🇬", aliases: &["开罗", "EGY", "egypt", "cairo"] },
+    Region { id: "NG", zh: "尼日利亚", flag: "🇳🇬", aliases: &["NGA", "nigeria"] },
+    Region { id: "KE", zh: "肯尼亚", flag: "🇰🇪", aliases: &["KEN", "kenya"] },
+    Region { id: "KZ", zh: "哈萨克斯坦", flag: "🇰🇿", aliases: &["KAZ", "kazakhstan", "almaty"] },
+    Region { id: "CN", zh: "中国", flag: "🇨🇳", aliases: &["上海", "北京", "广州", "深圳", "CHN", "china", "shanghai", "beijing"] },
+    Region { id: "MO", zh: "澳门", flag: "🇲🇴", aliases: &["MAC", "macau", "macao"] },
+    Region { id: "PA", zh: "巴拿马", flag: "🇵🇦", aliases: &["PAN", "panama"] },
+    Region { id: "AT", zh: "奥地利", flag: "🇦🇹", aliases: &["维也纳", "AUT", "austria", "vienna"] },
+    Region { id: "BE", zh: "比利时", flag: "🇧🇪", aliases: &["BEL", "belgium"] },
+    Region { id: "PT", zh: "葡萄牙", flag: "🇵🇹", aliases: &["PRT", "portugal"] },
+    Region { id: "CZ", zh: "捷克", flag: "🇨🇿", aliases: &["CZE", "czech"] },
+    Region { id: "IE", zh: "爱尔兰", flag: "🇮🇪", aliases: &["IRL", "ireland"] },
+    Region { id: "RO", zh: "罗马尼亚", flag: "🇷🇴", aliases: &["ROU", "romania"] },
+    Region { id: "BG", zh: "保加利亚", flag: "🇧🇬", aliases: &["BGR", "bulgaria"] },
+    Region { id: "HU", zh: "匈牙利", flag: "🇭🇺", aliases: &["布达佩斯", "HUN", "hungary", "budapest"] },
+    Region { id: "GR", zh: "希腊", flag: "🇬🇷", aliases: &["GRC", "greece"] },
+    Region { id: "LU", zh: "卢森堡", flag: "🇱🇺", aliases: &["LUX", "luxembourg"] },
+    Region { id: "LA", zh: "老挝", flag: "🇱🇦", aliases: &["LAO", "laos"] },
+    Region { id: "KH", zh: "柬埔寨", flag: "🇰🇭", aliases: &["KHM", "cambodia"] },
+    Region { id: "MM", zh: "缅甸", flag: "🇲🇲", aliases: &["MMR", "myanmar"] },
+    Region { id: "PK", zh: "巴基斯坦", flag: "🇵🇰", aliases: &["PAK", "pakistan"] },
+    Region { id: "LK", zh: "斯里兰卡", flag: "🇱🇰", aliases: &["LKA", "sri lanka"] },
+    Region { id: "BD", zh: "孟加拉", flag: "🇧🇩", aliases: &["BGD", "bangladesh"] },
+    Region { id: "NP", zh: "尼泊尔", flag: "🇳🇵", aliases: &["NPL", "nepal"] },
+    Region { id: "MN", zh: "蒙古", flag: "🇲🇳", aliases: &["MNG", "mongolia"] },
+    Region { id: "GE", zh: "格鲁吉亚", flag: "🇬🇪", aliases: &["GEO", "georgia"] },
+    Region { id: "AZ", zh: "阿塞拜疆", flag: "🇦🇿", aliases: &["AZE", "azerbaijan"] },
+];
+
+/// Pool name for a region (`flag + zh` + "节点").
+fn region_pool_name(region: &Region) -> String {
+    format!("{} {}节点", region.flag, region.zh)
+}
+
+/// The catch-all region pool name for nodes matching no region.
+const OTHER_REGION_POOL_NAME: &str = "其他节点";
+
+/// Mirror `detectRegion` from `src/nodeGroups.ts`: flag emoji → Chinese
+/// substring → English word → ISO token, best tier wins.
+fn detect_region(name: &str) -> Option<&'static Region> {
+    // Tier 0 — a flag emoji (regional-indicator pair) is the strongest signal.
+    let chars: Vec<char> = name.chars().collect();
+    let mut i = 0;
+    while i + 1 < chars.len() {
+        let a = chars[i] as u32;
+        let b = chars[i + 1] as u32;
+        if (0x1F1E6..=0x1F1FF).contains(&a) && (0x1F1E6..=0x1F1FF).contains(&b) {
+            let iso = format!(
+                "{}{}",
+                char::from_u32(0x41 + a - 0x1F1E6).unwrap(),
+                char::from_u32(0x41 + b - 0x1F1E6).unwrap()
+            );
+            return REGIONS.iter().find(|r| r.id == iso);
+        }
+        i += 1;
+    }
+
+    // Latin tokens for word/token matching.
+    let words: Vec<String> = name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_string())
+        .collect();
+    let latin = format!(" {}", words.join(" ").to_lowercase());
+
+    let mut best: Option<(&'static Region, u8, usize)> = None;
+    for region in REGIONS {
+        for alias in region.aliases {
+            let is_latin = alias.bytes().all(|b| b.is_ascii_alphanumeric() || b == b' ');
+            let (tier, hit) = if !is_latin {
+                (1, name.contains(alias))
+            } else if alias.len() == 2 && alias.bytes().all(|b| b.is_ascii_uppercase()) {
+                (3, words.iter().any(|w| w == alias))
+            } else if alias.len() == 3 && alias.bytes().all(|b| b.is_ascii_uppercase()) {
+                (4, words.iter().any(|w| w.eq_ignore_ascii_case(alias)))
+            } else {
+                (2, latin.contains(&format!(" {} ", alias.to_lowercase())))
+            };
+            if hit {
+                let better = match best {
+                    None => true,
+                    Some((_, bt, blen)) => tier < bt || (tier == bt && alias.len() > blen),
+                };
+                if better {
+                    best = Some((region, tier, alias.len()));
+                }
+            }
+        }
+    }
+    best.map(|(region, _, _)| region)
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppStore {
     #[serde(default)]
@@ -857,6 +1001,9 @@ impl AppStore {
             });
         }
         self.gc_favorite_nodes();
+        // Region pools track the live node list — a subscription import/refresh
+        // may introduce or drop whole regions.
+        self.sync_region_pools();
         Ok(())
     }
 
@@ -1743,6 +1890,79 @@ impl AppStore {
         created
     }
 
+    /// Sync region node pools against the current live node list.
+    ///
+    /// Every region in [`REGIONS`] with at least one live node gets a keyword
+    /// pool (created on first sight); a region whose nodes are all gone has
+    /// its pool removed. Nodes matching no region fall into the "其他节点"
+    /// catch-all pool. Returns the number of pools created or removed. Region
+    /// pools are recognized by name, so user-created pools (any other name)
+    /// are never touched.
+    pub fn sync_region_pools(&mut self) -> usize {
+        use std::collections::HashSet;
+        let enabled: HashSet<&str> = self
+            .subscriptions
+            .iter()
+            .filter(|s| s.enabled)
+            .map(|s| s.id.as_str())
+            .collect();
+        let node_names: Vec<String> = self
+            .nodes
+            .iter()
+            .filter(|n| enabled.contains(n.subscription_id.as_str()))
+            .map(|n| n.node.name.clone())
+            .collect();
+
+        let mut seen: HashSet<&'static str> = HashSet::new();
+        let mut other_seen = false;
+        for name in &node_names {
+            match detect_region(name) {
+                Some(region) => {
+                    seen.insert(region.id);
+                }
+                None => other_seen = true,
+            }
+        }
+
+        let before = self.pools.len();
+        // Region pools: create when a node exists, drop when the region is empty.
+        for region in REGIONS {
+            let pool_name = region_pool_name(region);
+            if seen.contains(region.id) {
+                if !self.pools.iter().any(|p| p.name == pool_name) {
+                    self.pools.push(crate::domain::NodePool::new(
+                        &pool_name,
+                        crate::domain::PoolMode::Keyword {
+                            include: region.aliases.iter().map(|s| s.to_string()).collect(),
+                            exclude: Vec::new(),
+                        },
+                    ));
+                }
+            } else {
+                self.pools.retain(|p| p.name != pool_name);
+            }
+        }
+        // Catch-all "其他节点": present only when some node matches no region.
+        let all_keywords: Vec<String> = REGIONS
+            .iter()
+            .flat_map(|r| r.aliases.iter().map(|s| s.to_string()))
+            .collect();
+        if other_seen {
+            if !self.pools.iter().any(|p| p.name == OTHER_REGION_POOL_NAME) {
+                self.pools.push(crate::domain::NodePool::new(
+                    OTHER_REGION_POOL_NAME,
+                    crate::domain::PoolMode::Keyword {
+                        include: Vec::new(),
+                        exclude: all_keywords,
+                    },
+                ));
+            }
+        } else {
+            self.pools.retain(|p| p.name != OTHER_REGION_POOL_NAME);
+        }
+        self.pools.len().abs_diff(before)
+    }
+
     pub fn update_pool(
         &mut self,
         id: &str,
@@ -2407,6 +2627,88 @@ pub fn default_store_path(app_data_dir: &Path) -> PathBuf {
 mod tests {
     use super::*;
     use crate::domain::RuleType;
+
+    #[test]
+    fn sync_region_pools_creates_drops_and_other() {
+        let mut store = AppStore::default();
+        let sub = crate::domain::Subscription {
+            id: "sub".into(),
+            name: "sub".into(),
+            source: crate::domain::SubscriptionSource::Url {
+                url: "https://example.com/s".into(),
+            },
+            last_update: 1,
+            node_count: 2,
+            enabled: true,
+            format: Some("clash_yaml".into()),
+            skipped_count: 0,
+            via_proxy: false,
+            auto_update: false,
+            auto_update_interval_min: 1440,
+            traffic: None,
+            user_agent: None,
+            rule_providers: Vec::new(),
+            proxy_groups: Vec::new(),
+        };
+        let mk = |id: &str, name: &str| crate::domain::ProxyNode {
+            id: id.into(),
+            name: name.into(),
+            protocol: crate::domain::Protocol::Trojan,
+            server: "x.example.com".into(),
+            port: 443,
+            tls: None,
+            transport: None,
+            udp: Some(false),
+            config: crate::domain::ProtocolConfig::Trojan {
+                password: "p".into(),
+            },
+            source: None,
+            raw: None,
+            latency_ms: None,
+            latency_at: None,
+        };
+        store
+            .upsert_subscription(
+                sub,
+                vec![mk("n1", "🇭🇰 香港-01"), mk("n2", "德国 法兰克福-01"), mk("n3", "未知地区-01")],
+            )
+            .unwrap();
+
+        let names: Vec<&str> = store.pools.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            names.iter().any(|n| *n == "🇭🇰 香港节点"),
+            "HK pool should exist: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| *n == "🇩🇪 德国节点"),
+            "DE pool should exist: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| *n == "其他节点"),
+            "catch-all should exist: {names:?}"
+        );
+
+        // Drop the HK + unknown nodes → HK pool and catch-all disappear.
+        store
+            .upsert_subscription(
+                store.subscriptions[0].clone(),
+                vec![mk("n2", "德国 法兰克福-01")],
+            )
+            .unwrap();
+        let names: Vec<&str> = store.pools.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            !names.iter().any(|n| *n == "🇭🇰 香港节点"),
+            "HK pool should be dropped: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| *n == "其他节点"),
+            "catch-all should be dropped: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| *n == "🇩🇪 德国节点"),
+            "DE pool should remain: {names:?}"
+        );
+    }
 
     fn test_store_path(name: &str) -> PathBuf {
         let nonce = SystemTime::now()

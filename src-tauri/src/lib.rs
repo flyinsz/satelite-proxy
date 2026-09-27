@@ -228,12 +228,13 @@ pub fn run() {
                     // before the field existed, so the rules-page picker lists
                     // them without a manual refresh.
                     crate::remote_rule_auto::heal_rule_providers(store, &app_data_dir);
-                    // Seed built-in region node pools once (idempotent).
-                    let seeded = store.seed_builtin_node_pools();
-                    if seeded > 0 {
+                    // Sync region node pools against the live node list (drops
+                    // stale built-in pools left by older builds).
+                    let changed = store.sync_region_pools();
+                    if changed > 0 {
                         crate::app_log::info(
                             "builtin_pools",
-                            format!("seeded {seeded} built-in node pools"),
+                            format!("synced region node pools ({changed} changed)"),
                         );
                     }
                     Ok(())
