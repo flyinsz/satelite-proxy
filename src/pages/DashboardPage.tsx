@@ -1474,28 +1474,25 @@ function coreDisplayName(kind: string | null | undefined): string {
                 { value: "tun", label: t("dashboard.captureTun") },
               ]}
             />
-            {captureMode === "system" && (
-              <div
-                className="dash-inline-row dash-capture dash-capture-kind"
-                style={{ flexBasis: "100%" }}
-              >
-                <span className="dash-inline-label">
-                  {t("dashboard.captureSystemKind")}
-                </span>
-                <GlassSeg
-                  value={proxy?.system_proxy_kind ?? "manual"}
-                  ready={statusReady}
-                  ariaLabel={t("dashboard.captureSystemKind")}
-                  disabled={!statusReady || captureBusy}
-                  onChange={(v) => void onSetSystemProxyKind(v as "manual" | "pac")}
-                  options={[
-                    { value: "manual", label: t("dashboard.captureManual") },
-                    { value: "pac", label: t("dashboard.capturePac") },
-                  ]}
-                />
-              </div>
-            )}
           </div>
+          {captureMode === "system" && (
+            <div className="dash-inline-row dash-capture-kind">
+              <span className="dash-inline-label">
+                {t("dashboard.captureSystemKind")}
+              </span>
+              <GlassSeg
+                value={proxy?.system_proxy_kind ?? "manual"}
+                ready={statusReady}
+                ariaLabel={t("dashboard.captureSystemKind")}
+                disabled={!statusReady || captureBusy}
+                onChange={(v) => void onSetSystemProxyKind(v as "manual" | "pac")}
+                options={[
+                  { value: "manual", label: t("dashboard.captureManual") },
+                  { value: "pac", label: t("dashboard.capturePac") },
+                ]}
+              />
+            </div>
+          )}
         </aside>
       </section>
 
