@@ -806,7 +806,7 @@ const en = {
   "rules.resetAllBuiltinHint":
     "Restore the three built-in rule sets to factory; user rule sets are not affected",
   "rules.resetAllBuiltin": "Reset all",
-  "rules.importFromSub": "Import from subscription",
+  "rules.importFromSub": "From sub",
   "rules.importFromSubHint": "Import rule-providers from clash subscriptions",
   "rules.importTitle": "Import rule sets from subscription",
   "rules.importHint":
@@ -2002,7 +2002,7 @@ const zh: Record<MessageKey, string> = {
     "将「{name}」恢复为出厂设置？\n当前对该集的编辑（名称、URL、路由、更新周期）会丢失。\n（重启程序不会自动重置，只会保留你的修改。）",
   "rules.resetAllBuiltinHint": "将三条内置规则集恢复为出厂设置，不影响用户规则集",
   "rules.resetAllBuiltin": "重置",
-  "rules.importFromSub": "从订阅导入",
+  "rules.importFromSub": "订阅导入",
   "rules.importFromSubHint": "从 clash 订阅导入规则集",
   "rules.importTitle": "从订阅导入规则集",
   "rules.importHint":

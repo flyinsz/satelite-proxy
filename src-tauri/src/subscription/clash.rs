@@ -144,6 +144,20 @@ fn merge_rule_providers(acc: &mut Vec<ClashRuleProvider>, root: &Value) {
     }
 }
 
+/// Extract only the `rule-providers` from a clash body (no proxy parsing).
+///
+/// Used by the startup backfill to populate `Subscription.rule_providers` for
+/// subscriptions imported before the field existed.
+pub fn parse_rule_providers(content: &str) -> Vec<ClashRuleProvider> {
+    let mut acc: Vec<ClashRuleProvider> = Vec::new();
+    for document in serde_yaml::Deserializer::from_str(content) {
+        if let Ok(root) = Value::deserialize(document) {
+            merge_rule_providers(&mut acc, &root);
+        }
+    }
+    acc
+}
+
 /// Extract clash `rule-providers` from a document, inferring each one's
 /// suggested route target from any `RULE-SET,<name>,<target>` line in `rules:`.
 fn extract_rule_providers(root: &Value) -> Vec<ClashRuleProvider> {
@@ -1177,6 +1191,24 @@ rules:
 ";
         let parsed = parse_clash_yaml(yaml).unwrap();
         assert!(parsed.rule_providers.is_empty());
+    }
+
+    #[test]
+    fn parse_rule_providers_extracts_without_proxies() {
+        let yaml = "rule-providers:
+  ads:
+    type: http
+    behavior: domain
+    url: https://example.com/ads.txt
+    interval: 86400
+rules:
+  - RULE-SET,ads,REJECT
+";
+        let providers = parse_rule_providers(yaml);
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].name, "ads");
+        assert_eq!(providers[0].behavior, "domain");
+        assert_eq!(providers[0].suggested_target, "reject");
     }
 
     #[test]

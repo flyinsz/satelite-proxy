@@ -551,6 +551,33 @@ pub(crate) fn heal_contains_ip(store: &mut crate::storage::AppStore) {
     }
 }
 
+/// One-shot backfill: subscriptions imported before the `rule_providers`
+/// field existed carry an empty list even though their stored body has
+/// `rule-providers`. Re-parse the stored body once and populate the field so
+/// the "import from subscription" picker lists them without a manual refresh.
+pub(crate) fn heal_rule_providers(
+    store: &mut crate::storage::AppStore,
+    app_data_dir: &Path,
+) {
+    for sub in store.subscriptions.iter_mut() {
+        if !sub.rule_providers.is_empty() {
+            continue;
+        }
+        // Only clash bodies can carry rule-providers.
+        if sub.format.as_deref() != Some("clash_yaml") {
+            continue;
+        }
+        let path = crate::config::raw_subscription_path(app_data_dir, &sub.id);
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let providers = crate::subscription::parse_rule_providers(&body);
+        if !providers.is_empty() {
+            sub.rule_providers = providers;
+        }
+    }
+}
+
 /// Decompile and validate a binary `.srs` with the active sing-box core.
 /// The temporary JSON is created beside the input and always removed.
 pub(crate) fn decompile_srs(core: &Path, input: &Path) -> Result<Vec<u8>, String> {

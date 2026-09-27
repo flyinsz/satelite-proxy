@@ -224,6 +224,10 @@ pub fn run() {
                     // FATAL once a fakeip rule exists). Must run before the
                     // auto-proxy start below builds its first config.
                     crate::remote_rule_auto::heal_contains_ip(store);
+                    // Backfill clash rule-providers for subscriptions imported
+                    // before the field existed, so the rules-page picker lists
+                    // them without a manual refresh.
+                    crate::remote_rule_auto::heal_rule_providers(store, &app_data_dir);
                     Ok(())
                 }) {
                     app_log::warn(
