@@ -342,6 +342,45 @@ impl ClashRuleProvider {
     }
 }
 
+/// One clash `proxy-groups` entry discovered in a subscription body.
+///
+/// Clash groups are named node pools with a selection strategy (`url-test` =
+/// lowest latency, `select` = manual, `fallback` = failover, `load-balance`,
+/// `relay`). The parser records them so the UI can offer a one-click "import
+/// as node pool"; members are node *names* resolved to node ids at import time
+/// (nested group names and built-ins like `DIRECT` are dropped).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClashProxyGroup {
+    pub name: String,
+    /// `url-test` | `select` | `fallback` | `load-balance` | `relay`.
+    pub kind: String,
+    /// Probe URL for url-test/fallback (clash `url`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// Probe interval in seconds (clash `interval`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval: Option<u64>,
+    /// Latency tolerance in ms (clash `tolerance`, url-test).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<u32>,
+    /// Member node names (nested group names and built-ins are dropped at
+    /// import time).
+    #[serde(default)]
+    pub members: Vec<String>,
+}
+
+impl ClashProxyGroup {
+    /// Whether this group type maps to a supported pool strategy (url-test /
+    /// select are the minimum-viable set; fallback/load-balance/relay are
+    /// recognized but approximated or dropped).
+    pub fn supported_kind(kind: &str) -> bool {
+        matches!(
+            kind.trim().to_ascii_lowercase().as_str(),
+            "url-test" | "select" | "fallback" | "load-balance"
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Subscription {
     pub id: String,
@@ -378,6 +417,10 @@ pub struct Subscription {
     /// re-fetching the body.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rule_providers: Vec<ClashRuleProvider>,
+    /// Clash `proxy-groups` discovered at last parse (empty for non-clash
+    /// inputs). Persisted so the UI can offer "import as node pool".
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proxy_groups: Vec<ClashProxyGroup>,
 }
 
 fn default_auto_update_interval_min() -> u32 {
@@ -449,6 +492,9 @@ pub struct SubscriptionDetail {
     /// Clash `rule-providers` discovered at last parse.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rule_providers: Vec<ClashRuleProvider>,
+    /// Clash `proxy-groups` discovered at last parse.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proxy_groups: Vec<ClashProxyGroup>,
 }
 
 impl Subscription {
@@ -523,6 +569,7 @@ impl Subscription {
             traffic: self.traffic.clone(),
             user_agent: self.user_agent.clone(),
             rule_providers: self.rule_providers.clone(),
+            proxy_groups: self.proxy_groups.clone(),
         };
         match &self.source {
             SubscriptionSource::Url { url } => SubscriptionDetail {

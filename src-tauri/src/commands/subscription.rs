@@ -155,6 +155,42 @@ pub fn list_subscription_rule_providers(
         .map_err(|e| e.to_string())
 }
 
+/// One subscription's clash `proxy-groups`, grouped for the "import as node
+/// pool" picker (import happens per-subscription, not per-group).
+#[derive(Debug, Clone, Serialize)]
+pub struct SubscriptionProxyGroups {
+    pub subscription_id: String,
+    pub subscription_name: String,
+    /// Whether this subscription is currently enabled (the "current" one in
+    /// single-select mode) — the picker sorts it first.
+    pub enabled: bool,
+    pub groups: Vec<crate::domain::ClashProxyGroup>,
+}
+
+/// All clash `proxy-groups` discovered across subscriptions, grouped by
+/// owning subscription (custom profiles excluded — they are full configs, not
+/// node subscriptions). Subscriptions without any group are omitted.
+#[tauri::command(async)]
+pub fn list_subscription_proxy_groups(
+    state: State<'_, AppState>,
+) -> Result<Vec<SubscriptionProxyGroups>, String> {
+    state
+        .with_store(|store| {
+            Ok(store
+                .subscriptions
+                .iter()
+                .filter(|s| s.source.contributes_nodes() && !s.proxy_groups.is_empty())
+                .map(|s| SubscriptionProxyGroups {
+                    subscription_id: s.id.clone(),
+                    subscription_name: s.name.clone(),
+                    enabled: s.enabled,
+                    groups: s.proxy_groups.clone(),
+                })
+                .collect())
+        })
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command(async)]
 pub fn list_subscription_urls(
     state: State<'_, AppState>,

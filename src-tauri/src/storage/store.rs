@@ -2971,6 +2971,7 @@ mod tests {
             traffic: None,
             user_agent: None,
             rule_providers: Vec::new(),
+            proxy_groups: Vec::new(),
         }
     }
 

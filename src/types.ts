@@ -207,6 +207,30 @@ export interface SubscriptionRuleProviders {
   providers: ClashRuleProvider[];
 }
 
+/** One clash `proxy-groups` entry discovered in a subscription body. */
+export interface ClashProxyGroup {
+  name: string;
+  /** url-test | select | fallback | load-balance | relay */
+  kind: string;
+  /** Probe URL for url-test/fallback (clash `url`). */
+  url?: string | null;
+  /** Probe interval in seconds (clash `interval`). */
+  interval?: number | null;
+  /** Latency tolerance in ms (clash `tolerance`). */
+  tolerance?: number | null;
+  /** Member node names (nested group names / built-ins are dropped on import). */
+  members: string[];
+}
+
+/** A clash proxy-group grouped with its owning subscription (batch import). */
+export interface SubscriptionProxyGroups {
+  subscription_id: string;
+  subscription_name: string;
+  /** Whether this subscription is currently enabled (sorted first). */
+  enabled: boolean;
+  groups: ClashProxyGroup[];
+}
+
 /** Result of a per-subscription batch import of rule-providers. */
 export interface ImportRuleProvidersSummary {
   imported: number;

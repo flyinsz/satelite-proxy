@@ -752,6 +752,7 @@ mod tests {
             skipped: vec![],
             format: SubscriptionFormat::UriList,
             rule_providers: Vec::new(),
+            proxy_groups: Vec::new(),
         };
         let outcome = build_outcome(
             "test-sub".into(),
@@ -809,6 +810,7 @@ mod tests {
                     skipped: vec![],
                     format: SubscriptionFormat::UriList,
                     rule_providers: Vec::new(),
+                    proxy_groups: Vec::new(),
                 },
                 None,
                 false,
@@ -839,6 +841,7 @@ mod tests {
                 skipped: vec![],
                 format: SubscriptionFormat::UriList,
                 rule_providers: Vec::new(),
+                proxy_groups: Vec::new(),
             },
             Some(before.subscription.id.clone()),
             false,
@@ -872,6 +875,7 @@ mod tests {
             traffic: None,
             user_agent: None,
             rule_providers: Vec::new(),
+            proxy_groups: Vec::new(),
         });
         let second = unique_subscription_id(&store, subscription_id(&source));
         assert_ne!(second, base);
@@ -1156,6 +1160,7 @@ pub fn import_from_custom(
         skipped: Vec::new(),
         format: crate::domain::SubscriptionFormat::Manual,
         rule_providers: Vec::new(),
+        proxy_groups: Vec::new(),
     };
     let mut outcome = build_outcome(display_name, source, parsed, existing_id, false);
     outcome.subscription.auto_update = false;
@@ -1266,6 +1271,7 @@ fn build_outcome(
         traffic: remark_traffic,
         user_agent: None,
         rule_providers: parsed.rule_providers,
+        proxy_groups: parsed.proxy_groups,
     };
 
     // Re-hash node ids on the subscription id + backend identity

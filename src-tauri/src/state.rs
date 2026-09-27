@@ -168,6 +168,7 @@ mod kernel_selection_poll_tests {
                         traffic: None,
                         user_agent: None,
                         rule_providers: Vec::new(),
+                        proxy_groups: Vec::new(),
                     },
                     vec![crate::domain::ProxyNode {
                         id: "node-a".into(),
@@ -237,6 +238,7 @@ mod kernel_selection_poll_tests {
                         traffic: None,
                         user_agent: None,
                         rule_providers: Vec::new(),
+                        proxy_groups: Vec::new(),
                     },
                     vec![crate::domain::ProxyNode {
                         id: "node-a".into(),

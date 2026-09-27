@@ -687,6 +687,9 @@ pub struct ParseResult {
     /// Clash `rule-providers` found in the body (empty for non-clash inputs).
     #[serde(default)]
     pub rule_providers: Vec<crate::domain::ClashRuleProvider>,
+    /// Clash `proxy-groups` found in the body (empty for non-clash inputs).
+    #[serde(default)]
+    pub proxy_groups: Vec<crate::domain::ClashProxyGroup>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

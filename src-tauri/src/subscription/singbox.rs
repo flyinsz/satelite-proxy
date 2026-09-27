@@ -136,6 +136,7 @@ pub fn parse_singbox_value(root: &Value) -> AppResult<ParseResult> {
         skipped,
         format: SubscriptionFormat::SingboxJson,
         rule_providers: Vec::new(),
+        proxy_groups: Vec::new(),
     })
 }
 

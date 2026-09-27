@@ -63,6 +63,21 @@ export function importSubscriptionRuleProviders(subscriptionId: string) {
   );
 }
 
+/** Clash proxy-groups grouped by owning subscription (for the rules page
+ *  "import groups as node pools" picker). */
+export function listSubscriptionProxyGroups() {
+  return invoke<import("./types").SubscriptionProxyGroups[]>(
+    "list_subscription_proxy_groups",
+  );
+}
+
+/** Batch-import every proxy-group of one subscription as an explicit node pool. */
+export function importSubscriptionProxyGroups(subscriptionId: string) {
+  return invoke<import("./types").NodePool[]>("import_subscription_proxy_groups", {
+    subscriptionId,
+  });
+}
+
 export function getSubscription(id: string) {
   return invoke<SubscriptionDetail>("get_subscription", { id });
 }

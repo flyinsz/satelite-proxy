@@ -4,6 +4,7 @@ use crate::domain::{
 };
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Deserialize)]
@@ -980,6 +981,86 @@ pub async fn import_subscription_rule_providers(
         skipped_duplicates,
         failed,
     })
+}
+
+/// Import every clash `proxy-group` of one subscription as an explicit node
+/// pool (`PoolMode::Explicit`). Group members are resolved from node names of
+/// that same subscription; nested group names / built-ins (DIRECT etc.) that
+/// resolve to nothing are skipped. Groups with no resolvable members and
+/// unsupported kinds (relay) are dropped. Already-existing pool names are
+/// skipped (case-insensitive).
+#[tauri::command]
+pub fn import_subscription_proxy_groups(
+    app: AppHandle,
+    subscription_id: String,
+) -> Result<Vec<crate::domain::NodePool>, String> {
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| "app state unavailable".to_string())?;
+
+    let pools = state
+        .with_store_mut(|store| {
+            let sub = store
+                .subscriptions
+                .iter()
+                .find(|s| s.id == subscription_id)
+                .ok_or_else(|| crate::error::AppError::NotFound(subscription_id.clone()))?;
+            let groups = sub.proxy_groups.clone();
+            if groups.is_empty() {
+                return Err(crate::error::AppError::Config(
+                    "该订阅没有可导入的 proxy-groups".into(),
+                ));
+            }
+
+            // Node name → node id for this subscription's own nodes.
+            let node_ids: HashMap<String, String> = store
+                .nodes
+                .iter()
+                .filter(|n| n.subscription_id == subscription_id)
+                .map(|n| (n.node.name.clone(), n.node.id.clone()))
+                .collect();
+
+            let mut created = Vec::new();
+            for g in &groups {
+                if !crate::domain::ClashProxyGroup::supported_kind(&g.kind) {
+                    continue;
+                }
+                if store
+                    .pools
+                    .iter()
+                    .any(|p| p.name.eq_ignore_ascii_case(&g.name))
+                {
+                    continue;
+                }
+                let mut resolved = Vec::new();
+                for member in &g.members {
+                    if let Some(id) = node_ids.get(member) {
+                        resolved.push(id.clone());
+                    }
+                }
+                if resolved.is_empty() {
+                    continue;
+                }
+                let pool = store.create_pool(
+                    &g.name,
+                    crate::domain::PoolMode::Explicit { node_ids: resolved },
+                )?;
+                if let Some(pool) = store.pools.iter_mut().find(|p| p.id == pool.id) {
+                    pool.strategy = crate::domain::PoolStrategy::from_clash_kind(&g.kind);
+                    pool.probe_url = g.url.clone();
+                    pool.interval = g.interval.and_then(|secs| u32::try_from(secs).ok());
+                    pool.tolerance = g.tolerance;
+                }
+                created.push(pool);
+            }
+            Ok(created)
+        })
+        .map_err(|e| e.to_string())?;
+
+    if pools.is_empty() {
+        return Err("订阅的 proxy-groups 没有可导入的分组".into());
+    }
+    Ok(pools)
 }
 
 #[tauri::command(async)]

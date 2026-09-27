@@ -557,19 +557,20 @@ pub(crate) fn heal_contains_ip(store: &mut crate::storage::AppStore) {
     }
 }
 
-/// One-shot backfill: subscriptions imported before the `rule_providers`
-/// field existed carry an empty list even though their stored body has
-/// `rule-providers`. Re-parse the stored body once and populate the field so
-/// the "import from subscription" picker lists them without a manual refresh.
+/// One-shot backfill: subscriptions imported before the `rule_providers` /
+/// `proxy_groups` fields existed carry empty lists even though their stored
+/// body has `rule-providers` / `proxy-groups`. Re-parse the stored body once
+/// and populate the fields so the "import from subscription" pickers list
+/// them without a manual refresh.
 pub(crate) fn heal_rule_providers(
     store: &mut crate::storage::AppStore,
     app_data_dir: &Path,
 ) {
     for sub in store.subscriptions.iter_mut() {
-        if !sub.rule_providers.is_empty() {
+        if !sub.rule_providers.is_empty() && !sub.proxy_groups.is_empty() {
             continue;
         }
-        // Only clash bodies can carry rule-providers.
+        // Only clash bodies can carry rule-providers / proxy-groups.
         if sub.format.as_deref() != Some("clash_yaml") {
             continue;
         }
@@ -577,9 +578,17 @@ pub(crate) fn heal_rule_providers(
         let Ok(body) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let providers = crate::subscription::parse_rule_providers(&body);
-        if !providers.is_empty() {
-            sub.rule_providers = providers;
+        if sub.rule_providers.is_empty() {
+            let providers = crate::subscription::parse_rule_providers(&body);
+            if !providers.is_empty() {
+                sub.rule_providers = providers;
+            }
+        }
+        if sub.proxy_groups.is_empty() {
+            let groups = crate::subscription::parse_proxy_groups(&body);
+            if !groups.is_empty() {
+                sub.proxy_groups = groups;
+            }
         }
     }
 }

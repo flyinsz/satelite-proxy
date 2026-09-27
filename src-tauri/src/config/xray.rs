@@ -1476,6 +1476,8 @@ mod tests {
             sidecar: None,
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
+            urltest_interval: "1m".into(),
+            urltest_tolerance: 50,
         }
     }
 
@@ -3204,6 +3206,8 @@ mod tests {
             sidecar: None,
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
+            urltest_interval: "1m".into(),
+            urltest_tolerance: 50,
         };
 
         // Off (default): no fragment wiring.

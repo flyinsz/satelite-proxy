@@ -237,6 +237,12 @@ pub struct AppSettings {
     /// Probe URL for latency tests (future)
     #[serde(default = "default_probe_url")]
     pub probe_url: String,
+    /// kernel 主组 urltest 的探测周期（如 "1m"、"30s"、"5m"）。
+    #[serde(default = "default_urltest_interval")]
+    pub urltest_interval: String,
+    /// kernel 主组 urltest 的容差（ms，best 需比当前快超过该值才切换）。
+    #[serde(default = "default_urltest_tolerance")]
+    pub urltest_tolerance: u32,
     /// When true, multiple subscriptions can be enabled (Mix); otherwise exclusive.
     #[serde(default)]
     pub mix_mode: bool,
@@ -475,6 +481,14 @@ fn default_probe_url() -> String {
     "https://www.gstatic.com/generate_204".into()
 }
 
+fn default_urltest_interval() -> String {
+    "1m".into()
+}
+
+fn default_urltest_tolerance() -> u32 {
+    50
+}
+
 fn default_tun_stack() -> String {
     "mixed".into()
 }
@@ -533,6 +547,8 @@ impl Default for AppSettings {
             clash_api_secret: None,
             api_secret_enabled: false,
             probe_url: default_probe_url(),
+            urltest_interval: default_urltest_interval(),
+            urltest_tolerance: default_urltest_tolerance(),
             mix_mode: false,
             tun_enabled: false,
             capture_mode: CaptureMode::Off,
@@ -706,6 +722,13 @@ mod tests {
         let mut settings = AppSettings::default();
         settings.migrate_api_secret_enabled();
         assert!(!settings.api_secret_enabled);
+    }
+
+    #[test]
+    fn urltest_options_default_to_1m_and_50() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.urltest_interval, "1m");
+        assert_eq!(settings.urltest_tolerance, 50);
     }
 
     #[test]

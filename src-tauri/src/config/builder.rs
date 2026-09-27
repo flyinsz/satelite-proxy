@@ -54,6 +54,10 @@ pub struct BuildOptions {
     pub auto_select: AutoSelectMode,
     /// URL for kernel urltest (and shared probe default).
     pub probe_url: String,
+    /// kernel 主组 urltest 的探测周期（如 "1m"、"30s"、"5m"）。
+    pub urltest_interval: String,
+    /// kernel 主组 urltest 的容差（ms，best 需比当前快超过该值才切换）。
+    pub urltest_tolerance: u32,
     /// Resolve the originating process per connection (sing-box
     /// `find_process_mode`: on → always, off → off).
     pub find_process: bool,
@@ -285,14 +289,24 @@ pub fn build_singbox_config(nodes: &[ProxyNode], opts: &BuildOptions) -> AppResu
         } else {
             opts.probe_url.trim().to_string()
         };
+        let interval = if opts.urltest_interval.trim().is_empty() {
+            "1m".to_string()
+        } else {
+            opts.urltest_interval.trim().to_string()
+        };
+        let tolerance = if opts.urltest_tolerance == 0 {
+            50
+        } else {
+            opts.urltest_tolerance
+        };
         // urltest only lists real nodes (never "direct" — would win on latency).
         outbounds.push(json!({
             "type": "urltest",
             "tag": "proxy",
             "outbounds": tags.clone(),
             "url": url,
-            "interval": "1m",
-            "tolerance": 50,
+            "interval": interval,
+            "tolerance": tolerance,
             "idle_timeout": "30m",
             "interrupt_exist_connections": false,
         }));
@@ -312,7 +326,12 @@ pub fn build_singbox_config(nodes: &[ProxyNode], opts: &BuildOptions) -> AppResu
     outbounds.extend(build_filter_set_selectors(&opts.rule_sets, nodes, &tags));
     // Named node pools (Proxy Chain feature) — selectors must precede the
     // chain outbounds below, which detour into them by tag.
-    outbounds.extend(build_pool_selectors(&opts.pools, nodes, &tags));
+    outbounds.extend(build_pool_selectors(
+        &opts.pools,
+        nodes,
+        &tags,
+        &opts.probe_url,
+    ));
     // Named multi-hop chains: per-hop outbounds wired together via `detour`.
     let (chain_outbounds, chain_entry_tags) =
         build_chain_outbounds(&opts.chains, &opts.pools, nodes, &tags);
@@ -1273,28 +1292,60 @@ fn pool_member_tags(
     }
 }
 
-/// One `selector` outbound per [`NodePool`]. Pools with no live members are
-/// skipped (a selector with an empty `outbounds` list is invalid sing-box
-/// config) — chain hops referencing an empty pool fall back to `direct` at
-/// resolution time, mirroring the empty-Smart-pool fallback.
+/// One `selector` / `urltest` outbound per [`NodePool`], dispatched on
+/// `pool.strategy`. Pools with no live members are skipped (an outbound with
+/// an empty `outbounds` list is invalid sing-box config) — chain hops
+/// referencing an empty pool fall back to `direct` at resolution time,
+/// mirroring the empty-Smart-pool fallback.
 fn build_pool_selectors(
     pools: &[crate::domain::NodePool],
     nodes: &[ProxyNode],
     tags: &[String],
+    probe_url: &str,
 ) -> Vec<Value> {
+    use crate::domain::PoolStrategy;
     let mut out = Vec::new();
     for pool in pools {
         let members = pool_member_tags(pool, nodes, tags);
         if members.is_empty() {
             continue;
         }
-        let default = members.first().cloned().unwrap_or_else(|| "direct".into());
-        out.push(json!({
-            "type": "selector",
-            "tag": pool.outbound_tag(),
-            "outbounds": members,
-            "default": default,
-        }));
+        match pool.strategy {
+            PoolStrategy::UrlTest => {
+                // urltest must never include "direct" — it would win on latency.
+                let url = pool
+                    .probe_url
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                    .or_else(|| Some(probe_url).filter(|s| !s.trim().is_empty()))
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| "https://www.gstatic.com/generate_204".into());
+                let interval = pool
+                    .interval
+                    .map(|secs| format!("{secs}s"))
+                    .unwrap_or_else(|| "1m".into());
+                let tolerance = pool.tolerance.unwrap_or(50);
+                out.push(json!({
+                    "type": "urltest",
+                    "tag": pool.outbound_tag(),
+                    "outbounds": members,
+                    "url": url,
+                    "interval": interval,
+                    "tolerance": tolerance,
+                    "idle_timeout": "30m",
+                    "interrupt_exist_connections": false,
+                }));
+            }
+            PoolStrategy::Select => {
+                let default = members.first().cloned().unwrap_or_else(|| "direct".into());
+                out.push(json!({
+                    "type": "selector",
+                    "tag": pool.outbound_tag(),
+                    "outbounds": members,
+                    "default": default,
+                }));
+            }
+        }
     }
     out
 }
@@ -2253,6 +2304,8 @@ mod tests {
             sidecar: None,
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
+            urltest_interval: "1m".into(),
+            urltest_tolerance: 50,
         };
 
         // Both outbounds.
@@ -2381,6 +2434,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -3100,6 +3155,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -3218,6 +3275,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -3266,6 +3325,8 @@ mod tests {
             sidecar: None,
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
+            urltest_interval: "1m".into(),
+            urltest_tolerance: 50,
         };
 
         let localhost = build_singbox_config(&nodes, &base()).unwrap();
@@ -3320,6 +3381,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -3388,6 +3451,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -3433,6 +3498,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -3483,6 +3550,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -3552,6 +3621,8 @@ mod tests {
             sidecar: None,
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
+            urltest_interval: "1m".into(),
+            urltest_tolerance: 50,
         };
 
         let v4_only = build_singbox_config(&nodes, &base(false)).unwrap();
@@ -3602,6 +3673,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -3642,6 +3715,8 @@ mod tests {
             sidecar: None,
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
+            urltest_interval: "1m".into(),
+            urltest_tolerance: 50,
         };
 
         let off = build_singbox_config(&nodes, &base(false)).unwrap();
@@ -3712,6 +3787,8 @@ mod tests {
             sidecar: None,
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
+            urltest_interval: "1m".into(),
+            urltest_tolerance: 50,
         };
 
         let off = build_singbox_config(&nodes, &base(false)).unwrap();
@@ -3829,6 +3906,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap_err();
@@ -3867,6 +3946,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -3906,6 +3987,8 @@ mod tests {
                     sidecar: None,
                     tls_fragment_singbox: false,
                     tls_fragment_xray: false,
+                    urltest_interval: "1m".into(),
+                    urltest_tolerance: 50,
                 },
             )
             .unwrap();
@@ -3951,6 +4034,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -4002,6 +4087,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -4054,6 +4141,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -4110,6 +4199,8 @@ mod tests {
                 sidecar: None,
                 tls_fragment_singbox: false,
                 tls_fragment_xray: false,
+                urltest_interval: "1m".into(),
+                urltest_tolerance: 50,
             },
         )
         .unwrap();
@@ -4191,7 +4282,7 @@ mod tests {
                 node_ids: vec!["n2".into(), "n1".into()],
             },
         );
-        let selectors = build_pool_selectors(&[pool.clone()], &nodes, &tags);
+        let selectors = build_pool_selectors(&[pool.clone()], &nodes, &tags, "");
         assert_eq!(selectors.len(), 1);
         // Explicit mode is a deliberate user-picked order — must not get
         // silently re-sorted by latency like Keyword mode does.
@@ -4218,7 +4309,7 @@ mod tests {
                 exclude: vec![],
             },
         );
-        let selectors = build_pool_selectors(&[pool], &nodes, &tags);
+        let selectors = build_pool_selectors(&[pool], &nodes, &tags, "");
         assert_eq!(
             selectors[0]["outbounds"],
             json!([outbound_tag(&fast), outbound_tag(&slow)]),
@@ -4241,7 +4332,51 @@ mod tests {
                 exclude: vec![],
             },
         );
-        assert!(build_pool_selectors(&[pool], &nodes, &tags).is_empty());
+        assert!(build_pool_selectors(&[pool], &nodes, &tags, "").is_empty());
+    }
+
+    #[test]
+    fn urltest_pool_emits_urltest_outbound_and_select_pool_emits_selector() {
+        use crate::domain::{NodePool, PoolMode, PoolStrategy};
+        let nodes = vec![sample_node("n1", "HK-1"), sample_node("n2", "HK-2")];
+        let tags: Vec<String> = nodes.iter().map(outbound_tag).collect();
+        let mut urltest_pool = NodePool::new(
+            "自动池",
+            PoolMode::Explicit {
+                node_ids: vec!["n1".into(), "n2".into()],
+            },
+        );
+        urltest_pool.strategy = PoolStrategy::UrlTest;
+        urltest_pool.interval = Some(300);
+        urltest_pool.tolerance = Some(120);
+        urltest_pool.probe_url = Some("https://example.com/probe".into());
+
+        let outbounds = build_pool_selectors(&[urltest_pool.clone()], &nodes, &tags, "");
+        assert_eq!(outbounds.len(), 1);
+        assert_eq!(outbounds[0]["type"], "urltest");
+        assert_eq!(outbounds[0]["tag"], urltest_pool.outbound_tag());
+        assert_eq!(outbounds[0]["url"], "https://example.com/probe");
+        assert_eq!(outbounds[0]["interval"], "300s");
+        assert_eq!(outbounds[0]["tolerance"], 120);
+        assert!(
+            outbounds[0]["outbounds"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|t| t != "direct"),
+            "urltest must never list direct — it would win on latency"
+        );
+
+        let select_pool = NodePool::new(
+            "手动池",
+            PoolMode::Explicit {
+                node_ids: vec!["n1".into(), "n2".into()],
+            },
+        );
+        let outbounds = build_pool_selectors(&[select_pool.clone()], &nodes, &tags, "");
+        assert_eq!(outbounds.len(), 1);
+        assert_eq!(outbounds[0]["type"], "selector");
+        assert_eq!(outbounds[0]["tag"], select_pool.outbound_tag());
     }
 
     #[test]
@@ -4279,6 +4414,8 @@ mod tests {
             sidecar: None,
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
+            urltest_interval: "1m".into(),
+            urltest_tolerance: 50,
         };
         let nodes = vec![sample_node("n1", "A"), sample_node("n2", "B")];
         let chain = ProxyChain::new(
@@ -4665,6 +4802,8 @@ mod tests {
             sidecar: plan,
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
+            urltest_interval: "1m".into(),
+            urltest_tolerance: 50,
         }
     }
 
@@ -5001,6 +5140,8 @@ mod tests {
             sidecar: None,
             tls_fragment_singbox: false,
             tls_fragment_xray: false,
+            urltest_interval: "1m".into(),
+            urltest_tolerance: 50,
         }
     }
 

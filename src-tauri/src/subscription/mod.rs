@@ -7,7 +7,7 @@ mod singbox;
 mod uri;
 mod yaml_util;
 
-pub use clash::{parse_clash_yaml, parse_rule_providers};
+pub use clash::{parse_clash_yaml, parse_proxy_groups, parse_rule_providers};
 pub use manual::{draft_to_node, node_to_draft, parse_manual_draft, parse_single_uri};
 pub use singbox::{looks_like_singbox_json, parse_singbox_json, validate_complete_singbox_config};
 pub use uri::parse_uri_list;

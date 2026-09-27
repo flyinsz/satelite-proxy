@@ -1,8 +1,8 @@
 //! Parse Clash YAML `proxies:` list into normalized [`ProxyNode`]s.
 
 use crate::domain::{
-    ClashRuleProvider, ParseResult, Protocol, ProtocolConfig, ProxyNode, ShadowTlsOpts,
-    SkippedProxy, SubscriptionFormat, TlsConfig, Transport,
+    ClashProxyGroup, ClashRuleProvider, ParseResult, Protocol, ProtocolConfig, ProxyNode,
+    ShadowTlsOpts, SkippedProxy, SubscriptionFormat, TlsConfig, Transport,
 };
 use crate::error::{AppError, AppResult};
 use crate::subscription::yaml_util::{
@@ -27,6 +27,7 @@ pub fn parse_clash_yaml(content: &str) -> AppResult<ParseResult> {
 
     let mut proxies: Vec<Value> = Vec::new();
     let mut rule_providers: Vec<ClashRuleProvider> = Vec::new();
+    let mut proxy_groups: Vec<ClashProxyGroup> = Vec::new();
     for document in serde_yaml::Deserializer::from_str(content) {
         let root = Value::deserialize(document)
             .map_err(|e| AppError::SubscriptionParse(format!("invalid yaml: {e}")))?;
@@ -34,6 +35,7 @@ pub fn parse_clash_yaml(content: &str) -> AppResult<ParseResult> {
             proxies.extend(list.iter().cloned());
         }
         merge_rule_providers(&mut rule_providers, &root);
+        merge_proxy_groups(&mut proxy_groups, &root);
     }
 
     if proxies.is_empty() {
@@ -75,6 +77,7 @@ pub fn parse_clash_yaml(content: &str) -> AppResult<ParseResult> {
         skipped,
         format: SubscriptionFormat::ClashYaml,
         rule_providers,
+        proxy_groups,
     })
 }
 
@@ -156,6 +159,101 @@ pub fn parse_rule_providers(content: &str) -> Vec<ClashRuleProvider> {
         }
     }
     acc
+}
+
+/// Extract only the `proxy-groups` from a clash body (no proxy parsing).
+///
+/// Used by the startup backfill to populate `Subscription.proxy_groups` for
+/// subscriptions imported before the field existed. Multi-document bodies
+/// (`---` separators) have their groups merged across all documents.
+pub fn parse_proxy_groups(content: &str) -> Vec<ClashProxyGroup> {
+    let mut acc: Vec<ClashProxyGroup> = Vec::new();
+    for document in serde_yaml::Deserializer::from_str(content) {
+        if let Ok(root) = Value::deserialize(document) {
+            merge_proxy_groups(&mut acc, &root);
+        }
+    }
+    acc
+}
+
+/// Merge `proxy-groups` from one document into `acc`. A group with the same
+/// name in a later document wins (multi-doc subscriptions rarely overlap, but
+/// the last definition should be authoritative, matching Clash).
+fn merge_proxy_groups(acc: &mut Vec<ClashProxyGroup>, root: &Value) {
+    for group in extract_proxy_groups(root) {
+        if let Some(existing) = acc.iter_mut().find(|g| g.name == group.name) {
+            *existing = group;
+        } else {
+            acc.push(group);
+        }
+    }
+}
+
+/// Extract clash `proxy-groups` (a sequence under `proxy-groups:`) from one
+/// document. Each entry is a mapping with `name` / `type` required; `url`,
+/// `interval` (seconds), `tolerance` (ms) and `proxies` (member names, kept
+/// verbatim) are optional. Entries that fail to parse or lack `name` / `type`
+/// are skipped.
+fn extract_proxy_groups(root: &Value) -> Vec<ClashProxyGroup> {
+    let Some(map) = root.as_mapping() else {
+        return Vec::new();
+    };
+    let Some(groups) = map
+        .get(Value::String("proxy-groups".into()))
+        .and_then(Value::as_sequence)
+    else {
+        return Vec::new();
+    };
+
+    groups
+        .iter()
+        .filter_map(|entry| {
+            let m = entry.as_mapping()?;
+            let name = m
+                .get(Value::String("name".into()))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())?
+                .to_string();
+            let kind = m
+                .get(Value::String("type".into()))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())?
+                .to_string();
+            let url = m
+                .get(Value::String("url".into()))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string);
+            let interval = m
+                .get(Value::String("interval".into()))
+                .and_then(Value::as_u64);
+            let tolerance = m
+                .get(Value::String("tolerance".into()))
+                .and_then(Value::as_u64)
+                .and_then(|v| u32::try_from(v).ok());
+            let members = m
+                .get(Value::String("proxies".into()))
+                .and_then(Value::as_sequence)
+                .map(|seq| {
+                    seq.iter()
+                        .filter_map(|v| v.as_str().map(str::trim).map(ToString::to_string))
+                        .filter(|s| !s.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default();
+            Some(ClashProxyGroup {
+                name,
+                kind,
+                url,
+                interval,
+                tolerance,
+                members,
+            })
+        })
+        .collect()
 }
 
 /// Extract clash `rule-providers` from a document, inferring each one's
@@ -1137,6 +1235,49 @@ fn parse_transport(map: &serde_yaml::Mapping) -> Result<Option<Transport>, Strin
 mod tests {
     use super::*;
     use crate::domain::{Protocol, ProtocolConfig};
+
+    #[test]
+    fn extracts_proxy_groups() {
+        let yaml = "proxies:
+  - name: A
+    type: ss
+    server: a.example.com
+    port: 8388
+    cipher: aes-256-gcm
+    password: x
+proxy-groups:
+  - name: 最低延时
+    type: url-test
+    url: https://www.gstatic.com/generate_204
+    interval: 300
+    tolerance: 50
+    proxies: [A, B]
+  - name: 手动
+    type: select
+    proxies: [A]
+";
+        let parsed = parse_clash_yaml(yaml).unwrap();
+        assert_eq!(parsed.proxy_groups.len(), 2);
+        let first = &parsed.proxy_groups[0];
+        assert_eq!(first.name, "最低延时");
+        assert_eq!(first.kind, "url-test");
+        assert_eq!(first.url.as_deref(), Some("https://www.gstatic.com/generate_204"));
+        assert_eq!(first.interval, Some(300));
+        assert_eq!(first.tolerance, Some(50));
+        assert_eq!(first.members, vec!["A".to_string(), "B".to_string()]);
+        assert_eq!(parsed.proxy_groups[1].name, "手动");
+        assert_eq!(parsed.proxy_groups[1].kind, "select");
+
+        // The standalone backfill entry point extracts the same groups.
+        let groups = parse_proxy_groups(yaml);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].name, "最低延时");
+        assert_eq!(groups[0].kind, "url-test");
+        assert_eq!(groups[0].interval, Some(300));
+        assert_eq!(groups[0].tolerance, Some(50));
+        assert_eq!(groups[0].members, vec!["A".to_string(), "B".to_string()]);
+        assert_eq!(groups[1].kind, "select");
+    }
 
     #[test]
     fn extracts_rule_providers_with_inferred_targets() {

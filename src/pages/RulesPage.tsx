@@ -17,11 +17,13 @@ import {
   getRuleSet,
   getSettings,
   importSubscriptionRuleProviders,
+  importSubscriptionProxyGroups,
   listAllNodes,
   listChains,
   listPools,
   listRemoteRuleItems,
   listRuleSets,
+  listSubscriptionProxyGroups,
   listSubscriptionRuleProviders,
   peekSettings,
   removeRule,
@@ -58,6 +60,7 @@ import type {
   RemoteRulePage,
   RuleTarget,
   RuleType,
+  SubscriptionProxyGroups,
   SubscriptionRuleProviders,
 } from "../types";
 
@@ -283,6 +286,11 @@ export function RulesPage({ embedded = false }: Props) {
   const [importOpen, setImportOpen] = useState(false);
   const [importGroups, setImportGroups] = useState<SubscriptionRuleProviders[]>([]);
   const [importBusyIds, setImportBusyIds] = useState<Set<string>>(new Set());
+
+  /** "Import proxy-groups as node pools" picker state (per subscription). */
+  const [proxyOpen, setProxyOpen] = useState(false);
+  const [proxyGroups, setProxyGroups] = useState<SubscriptionProxyGroups[]>([]);
+  const [proxyBusyIds, setProxyBusyIds] = useState<Set<string>>(new Set());
 
   /** New rule-set modal (window.prompt is unreliable in Tauri WebView). */
   const [newSetOpen, setNewSetOpen] = useState(false);
@@ -1369,6 +1377,45 @@ export function RulesPage({ embedded = false }: Props) {
     }
   }
 
+  async function openProxyGroups() {
+    setError(null);
+    try {
+      const groups = await listSubscriptionProxyGroups();
+      // Current (enabled) subscription first, others after.
+      groups.sort((a, b) => Number(b.enabled) - Number(a.enabled));
+      setProxyGroups(groups);
+      setProxyOpen(true);
+    } catch (err) {
+      setError(typeof err === "string" ? err : String(err));
+    }
+  }
+
+  async function importProxyGroup(sub: SubscriptionProxyGroups) {
+    setProxyBusyIds((current) => new Set(current).add(sub.subscription_id));
+    setError(null);
+    try {
+      const pools = await importSubscriptionProxyGroups(sub.subscription_id);
+      await reloadSets();
+      setProxyGroups((current) =>
+        current.filter((x) => x.subscription_id !== sub.subscription_id),
+      );
+      if (pools.length > 0) {
+        // Pools landed on the chain page — keep the local picker lean; a
+        // missed pool count is fine (names skipped as duplicates aren't
+        // surfaced, matching the rule-provider import flow).
+        void ensurePoolsLoaded();
+      }
+    } catch (err) {
+      setError(typeof err === "string" ? err : String(err));
+    } finally {
+      setProxyBusyIds((current) => {
+        const next = new Set(current);
+        next.delete(sub.subscription_id);
+        return next;
+      });
+    }
+  }
+
   async function onRefreshRemoteSet(id: string) {
     setRemoteBusyIds((current) => new Set(current).add(id));
     setError(null);
@@ -2024,6 +2071,14 @@ export function RulesPage({ embedded = false }: Props) {
               title={t("rules.importFromSubHint")}
             >
               {t("rules.importFromSub")}
+            </GlassButton>
+            <GlassButton
+              icon="⤵"
+              className="import-from-sub"
+              onClick={() => void openProxyGroups()}
+              title={t("rules.importGroupsHint")}
+            >
+              {t("rules.importGroupsFromSub")}
             </GlassButton>
           </div>
           <div className="ruleset-final" title={t("rules.finalHint")}>
@@ -3023,6 +3078,90 @@ export function RulesPage({ embedded = false }: Props) {
             </div>
             <footer className="modal-footer">
               <GlassButton variant="primary" onClick={() => setImportOpen(false)}>
+                {t("common.close")}
+              </GlassButton>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {proxyOpen && (
+        <div
+          className="modal-backdrop"
+          onClick={() => setProxyOpen(false)}
+        >
+          <div
+            className="modal rules-form-modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="modal-header">
+              <h2>{t("rules.importGroupsTitle")}</h2>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => setProxyOpen(false)}
+                aria-label={t("common.close")}
+              >
+                ×
+              </button>
+            </header>
+            <div className="modal-body">
+              <p className="muted" style={{ fontSize: 12, margin: 0 }}>
+                {t("rules.importGroupsHint")}
+              </p>
+              {proxyGroups.length === 0 ? (
+                <p className="muted" style={{ margin: 0 }}>
+                  {t("rules.importGroupsEmpty")}
+                </p>
+              ) : (
+                proxyGroups.map((sub) => {
+                  const busy = proxyBusyIds.has(sub.subscription_id);
+                  return (
+                    <div
+                      key={sub.subscription_id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "0.6rem",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontWeight: 500,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.4rem",
+                          }}
+                        >
+                          {sub.subscription_name}
+                          {sub.enabled && (
+                            <span className="pill ok" style={{ fontSize: 11 }}>
+                              {t("rules.importGroupsCurrent")}
+                            </span>
+                          )}
+                        </div>
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          {t("rules.importGroupsCount", { n: sub.groups.length })}
+                        </div>
+                      </div>
+                      <GlassButton
+                        variant="primary"
+                        disabled={busy}
+                        onClick={() => void importProxyGroup(sub)}
+                      >
+                        {busy
+                          ? t("rules.importGroupsBusy")
+                          : t("rules.importGroupsAction")}
+                      </GlassButton>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+            <footer className="modal-footer">
+              <GlassButton variant="primary" onClick={() => setProxyOpen(false)}>
                 {t("common.close")}
               </GlassButton>
             </footer>

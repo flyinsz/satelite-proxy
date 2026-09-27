@@ -1,6 +1,30 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+/// How a [`NodePool`] picks its active member when more than one node is
+/// available. Mapped from clash `proxy-groups` `type` (and used by the
+/// per-pool outbound generation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PoolStrategy {
+    /// Manual selector — the user (or app) picks the active node.
+    #[default]
+    Select,
+    /// url-test — the kernel probes all members and picks the lowest latency.
+    UrlTest,
+}
+
+impl PoolStrategy {
+    pub fn from_clash_kind(kind: &str) -> Self {
+        match kind.trim().to_ascii_lowercase().as_str() {
+            "url-test" => Self::UrlTest,
+            // fallback / load-balance are approximated as url-test for now.
+            "fallback" | "load-balance" => Self::UrlTest,
+            _ => Self::Select,
+        }
+    }
+}
+
 /// How a [`NodePool`] selects its member nodes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
@@ -26,6 +50,18 @@ pub struct NodePool {
     pub id: String,
     pub name: String,
     pub mode: PoolMode,
+    /// Selection strategy (manual `select` vs auto `url-test`).
+    #[serde(default)]
+    pub strategy: PoolStrategy,
+    /// Probe URL for `url-test` (defaults to the global probe URL when empty).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_url: Option<String>,
+    /// Probe interval in seconds for `url-test` (kernel default when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval: Option<u32>,
+    /// Latency tolerance in ms for `url-test` (kernel default when absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance: Option<u32>,
 }
 
 impl NodePool {
@@ -35,6 +71,10 @@ impl NodePool {
             id,
             name: name.trim().to_string(),
             mode,
+            strategy: PoolStrategy::Select,
+            probe_url: None,
+            interval: None,
+            tolerance: None,
         }
     }
 

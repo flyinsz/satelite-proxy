@@ -44,6 +44,7 @@ pub fn parse_uri_list(content: &str, format: SubscriptionFormat) -> AppResult<Pa
         skipped,
         format,
         rule_providers: Vec::new(),
+        proxy_groups: Vec::new(),
     })
 }
 
