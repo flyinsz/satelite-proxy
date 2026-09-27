@@ -1925,6 +1925,15 @@ impl AppStore {
         }
 
         let before = self.pools.len();
+        // Remove legacy fixed region pools (pre-flag names) so they never
+        // linger next to the new flag-prefixed ones.
+        for legacy in [
+            "香港节点", "新加坡节点", "美国节点", "日本节点", "德国节点", "英国节点", "韩国节点",
+            "台湾节点", "法国节点", "加拿大节点", "澳大利亚节点", "俄罗斯节点", "印度节点",
+            "泰国节点", "越南节点", "马来西亚节点", "菲律宾节点",
+        ] {
+            self.pools.retain(|p| p.name != legacy);
+        }
         // Region pools: create when a node exists, drop when the region is empty.
         for region in REGIONS {
             let pool_name = region_pool_name(region);
