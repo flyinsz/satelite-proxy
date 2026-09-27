@@ -5666,6 +5666,36 @@ tr.dns-diag-tr:hover {
   padding: 0 1rem 0.9rem;
 }
 
+/* PAC script preview — reuses the standard modal chrome; the script is shown
+   in a scrollable, selectable mono <pre> with a copy action. */
+.pac-preview-modal {
+  width: min(720px, 100%);
+  max-height: min(90vh, 900px);
+  display: flex;
+  flex-direction: column;
+}
+
+.pac-preview-modal .modal-body {
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.pac-preview-text {
+  margin: 0;
+  max-height: min(64vh, 640px);
+  overflow: auto;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.7rem 0.8rem;
+  font-size: 0.78rem;
+  font-family: var(--mono);
+  white-space: pre;
+  word-break: normal;
+  user-select: text;
+}
+
 .error-modal-text {
   margin: 0;
   max-height: min(50vh, 420px);

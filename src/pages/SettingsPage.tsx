@@ -224,6 +224,8 @@ export function SettingsPage() {
   const [pacClearing, setPacClearing] = useState(false);
   const [pacPreview, setPacPreview] = useState<string | null>(null);
   const [pacPreviewLoading, setPacPreviewLoading] = useState(false);
+  const [pacCopied, setPacCopied] = useState(false);
+  const pacCopiedTimer = useRef<number | null>(null);
 
   const reloadPacTab = useCallback(async () => {
     const [status, list] = await Promise.all([
@@ -331,6 +333,18 @@ export function SettingsPage() {
       setPacClearing(false);
     }
   }, [t]);
+
+  const onCopyPac = useCallback(async () => {
+    if (pacPreview == null) return;
+    try {
+      await navigator.clipboard.writeText(pacPreview);
+      setPacCopied(true);
+      if (pacCopiedTimer.current != null) window.clearTimeout(pacCopiedTimer.current);
+      pacCopiedTimer.current = window.setTimeout(() => setPacCopied(false), 1500);
+    } catch {
+      // Clipboard unavailable — the <pre> stays selectable as the fallback.
+    }
+  }, [pacPreview]);
 
   const onPreviewPac = useCallback(async () => {
     setPacPreviewLoading(true);
@@ -2321,30 +2335,36 @@ HK"
               onClick={() => setPacPreview(null)}
             >
               <div
-                className="card"
-                style={{
-                  maxWidth: "min(900px, 90vw)",
-                  maxHeight: "80vh",
-                  overflow: "auto",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: "0.6rem",
-                }}
+                className="modal pac-preview-modal"
                 onClick={(e) => e.stopPropagation()}
               >
-                <div className="sys-proxy-title">{t("pac.previewTitle")}</div>
-                <textarea
-                  className="config-paste mono"
-                  readOnly
-                  spellCheck={false}
-                  rows={22}
-                  value={pacPreviewLoading ? t("pac.previewLoading") : pacPreview}
-                />
-                <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <GlassButton onClick={() => setPacPreview(null)}>
+                <header className="modal-header">
+                  <h2>{t("pac.previewTitle")}</h2>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={() => setPacPreview(null)}
+                    aria-label={t("pac.close")}
+                  >
+                    ×
+                  </button>
+                </header>
+                <div className="modal-body">
+                  <pre className="pac-preview-text">
+                    {pacPreviewLoading ? t("pac.previewLoading") : pacPreview}
+                  </pre>
+                </div>
+                <footer className="modal-footer">
+                  <GlassButton
+                    onClick={() => void onCopyPac()}
+                    disabled={pacPreviewLoading}
+                  >
+                    {pacCopied ? t("common.copied") : t("common.copy")}
+                  </GlassButton>
+                  <GlassButton variant="primary" onClick={() => setPacPreview(null)}>
                     {t("pac.close")}
                   </GlassButton>
-                </div>
+                </footer>
               </div>
             </div>
           )}
