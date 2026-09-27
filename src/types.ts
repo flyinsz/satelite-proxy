@@ -499,12 +499,22 @@ export type OutboundMode = "rule" | "global" | "direct";
 /** System-proxy implementation: manual (fixed port) | pac (script URL). */
 export type SystemProxyKind = "manual" | "pac";
 
-/** PAC routing list: domains / IP-CIDRs / suffixes / regions. */
+/** PAC routing list: custom domains / upstream gfwlist / IP-CIDRs / suffixes / regions. */
 export interface PacList {
+  /** User-owned domains; never touched by a gfwlist refresh. */
   domains: string[];
+  /** Domains synced from the upstream gfwlist; replaced wholesale on refresh. */
+  gfwlist_domains: string[];
   ip_cidrs: string[];
   suffixes: string[];
   regions: string[];
+}
+
+/** One built-in gfwlist mirror (list_pac_source_presets). */
+export interface PacSourcePreset {
+  id: string;
+  label: string;
+  url: string;
 }
 
 /** Live state of the PAC service (get_pac_status). */
@@ -512,8 +522,20 @@ export interface PacStatus {
   kind: SystemProxyKind;
   enabled: boolean;
   url: string;
+  /** Local PAC service listen port. */
+  port: number;
+  /** Total distinct domains (custom + upstream). */
   domain_count: number;
+  /** Domains coming from the upstream gfwlist. */
+  gfwlist_count: number;
+  /** User-owned domains. */
+  custom_count: number;
   last_update: number | null;
+  source_url: string;
+  auto_update: boolean;
+  update_interval_hours: number;
+  /** Generated PAC matching rules (domains + IPs + suffixes + regions). */
+  rule_count: number;
 }
 
 /** Extra sing-box inbound listener (settings-managed). */

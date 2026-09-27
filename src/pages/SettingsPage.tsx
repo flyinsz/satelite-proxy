@@ -5,8 +5,11 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import {
   checkAppUpdate,
   checkCoreUpdate,
+  clearGfwlist,
   diagnoseNetwork,
   downloadCore,
+  getPacPreview,
+  listPacSourcePresets,
   resetCoreToBundled,
   getAppInstallPath,
   getCoreInfo,
@@ -19,6 +22,7 @@ import {
   restartProxy,
   setCoreType,
   updatePacList,
+  updatePacSettings,
   updateSettings,
 } from "../api";
 import { GlassButton } from "../components/GlassButton";
@@ -48,6 +52,7 @@ import type {
   ExtraInbound,
   HeroStyle,
   PacList,
+  PacSourcePreset,
   PacStatus,
   ThemeId,
 } from "../types";
@@ -208,6 +213,17 @@ export function SettingsPage() {
   const [pacSaving, setPacSaving] = useState(false);
   const [pacRefreshing, setPacRefreshing] = useState(false);
   const [pacError, setPacError] = useState<string | null>(null);
+  /** Built-in gfwlist mirrors, loaded once for the source picker. */
+  const [pacPresets, setPacPresets] = useState<PacSourcePreset[]>([]);
+  /** Source URL draft (committed with "Save settings"). */
+  const [pacSourceUrl, setPacSourceUrl] = useState("");
+  const [pacAutoUpdate, setPacAutoUpdate] = useState(false);
+  const [pacIntervalHours, setPacIntervalHours] = useState(24);
+  const [pacPort, setPacPort] = useState("");
+  const [pacSettingsSaving, setPacSettingsSaving] = useState(false);
+  const [pacClearing, setPacClearing] = useState(false);
+  const [pacPreview, setPacPreview] = useState<string | null>(null);
+  const [pacPreviewLoading, setPacPreviewLoading] = useState(false);
 
   const reloadPacTab = useCallback(async () => {
     const [status, list] = await Promise.all([
@@ -215,6 +231,11 @@ export function SettingsPage() {
       getPacList().catch(() => null),
     ]);
     setPacStatus(status);
+    if (status) {
+      setPacSourceUrl(status.source_url);
+      setPacAutoUpdate(status.auto_update);
+      setPacIntervalHours(status.update_interval_hours);
+    }
     if (list) setPacList(list);
   }, []);
 
@@ -236,8 +257,10 @@ export function SettingsPage() {
     setPacSaving(true);
     setPacError(null);
     try {
-      const next = {
+      const next: PacList = {
         domains: parseTextareaList(pacList.domains.join("\n")),
+        // Upstream domains are owned by the refresh flow, not this editor.
+        gfwlist_domains: pacList.gfwlist_domains,
         ip_cidrs: parseTextareaList(pacList.ip_cidrs.join("\n")),
         suffixes: parseTextareaList(pacList.suffixes.join("\n")),
         regions: parseTextareaList(pacList.regions.join("\n")),
@@ -263,6 +286,63 @@ export function SettingsPage() {
       setPacError(t("pac.refreshError", { err: typeof e === "string" ? e : String(e) }));
     } finally {
       setPacRefreshing(false);
+    }
+  }, [t]);
+
+  /** Commit source URL / auto-update / interval / port in one call. */
+  const savePacSettings = useCallback(async () => {
+    const url = pacSourceUrl.trim();
+    if (!/^https?:\/\//i.test(url)) {
+      setPacError(t("pac.sourceInvalid"));
+      return;
+    }
+    const port = Number.parseInt(pacPort, 10);
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      setPacError(t("pac.portInvalid"));
+      return;
+    }
+    setPacSettingsSaving(true);
+    setPacError(null);
+    try {
+      const status = await updatePacSettings({
+        sourceUrl: url,
+        autoUpdate: pacAutoUpdate,
+        updateIntervalHours: pacIntervalHours,
+        pacPort: port,
+      });
+      setPacStatus(status);
+      setPacSourceUrl(status.source_url);
+    } catch (e) {
+      setPacError(t("pac.settingsError", { err: typeof e === "string" ? e : String(e) }));
+    } finally {
+      setPacSettingsSaving(false);
+    }
+  }, [pacSourceUrl, pacAutoUpdate, pacIntervalHours, pacPort, t]);
+
+  const onClearGfwlist = useCallback(async () => {
+    setPacClearing(true);
+    setPacError(null);
+    try {
+      setPacList(await clearGfwlist());
+      setPacStatus(await getPacStatus().catch(() => null));
+    } catch (e) {
+      setPacError(t("pac.settingsError", { err: typeof e === "string" ? e : String(e) }));
+    } finally {
+      setPacClearing(false);
+    }
+  }, [t]);
+
+  const onPreviewPac = useCallback(async () => {
+    setPacPreviewLoading(true);
+    setPacPreview("");
+    setPacError(null);
+    try {
+      setPacPreview(await getPacPreview());
+    } catch (e) {
+      setPacPreview(null);
+      setPacError(t("pac.previewError", { err: typeof e === "string" ? e : String(e) }));
+    } finally {
+      setPacPreviewLoading(false);
     }
   }, [t]);
 
@@ -1095,8 +1175,47 @@ export function SettingsPage() {
   useEffect(() => {
     if (visibleTab !== "pac") return;
     void reloadPacTab();
+    // Mirror presets are static; fetch once for the source picker.
+    listPacSourcePresets()
+      .then(setPacPresets)
+      .catch(() => setPacPresets([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibleTab]);
+
+  // Seed the PAC port draft from the loaded status.
+  useEffect(() => {
+    if (pacStatus) setPacPort(String(pacStatus.port));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pacStatus?.port]);
+
+  // Auto-updated in the background → refresh the panel without a manual reload.
+  useEffect(() => {
+    const unlisten = listen("pac-list-updated", () => {
+      void reloadPacTab();
+    });
+    return () => {
+      void unlisten.then((off) => off());
+    };
+  }, [reloadPacTab]);
+
+  // Interval options for the auto-update select.
+  const pacIntervalOptions = useMemo(
+    () =>
+      ([1, 6, 12, 24, 72] as const).map((hours) => ({
+        value: String(hours),
+        label:
+          hours === 1
+            ? t("pac.interval1h")
+            : hours === 6
+              ? t("pac.interval6h")
+              : hours === 12
+                ? t("pac.interval12h")
+                : hours === 24
+                  ? t("pac.interval24h")
+                  : t("pac.interval72h"),
+      })),
+    [t],
+  );
 
   // ←/→ cycle through the settings sub-tabs, skipping any the custom
   // runtime blocks. Ignored while typing (input/textarea/select) so text
@@ -1912,150 +2031,320 @@ export function SettingsPage() {
           {!pacStatus && !pacList ? (
             <div className="field-hint muted">{t("common.loading")}</div>
           ) : (
-            <div className="card settings-form settings-form-grid">
-              <div className="field-span-2">
-                <div className="sys-proxy-title">
-                  {t("pac.status")}
-                  <span className={`pill${pacStatus?.enabled ? " ok" : ""}`}>
-                    {pacStatus?.enabled
-                      ? t("pac.enabled")
-                      : t("pac.disabled")}
-                  </span>
+            <>
+              {/* ---- Service status + update source ---- */}
+              <div className="card settings-form settings-form-grid">
+                <div className="field-span-2">
+                  <div className="sys-proxy-title">
+                    {t("pac.status")}
+                    <span className={`pill${pacStatus?.enabled ? " ok" : ""}`}>
+                      {pacStatus?.enabled
+                        ? t("pac.enabled")
+                        : t("pac.disabled")}
+                    </span>
+                  </div>
+                  <div className="field-hint muted">
+                    <span className="stat-label">{t("pac.url")}</span>{" "}
+                    <code className="mono">{pacStatus?.url || "—"}</code>
+                    <span className="stat-label"> · {t("pac.lastUpdate")}</span>{" "}
+                    <span className="mono">
+                      {pacStatus?.last_update
+                        ? new Date(pacStatus.last_update * 1000).toLocaleString()
+                        : t("pac.never")}
+                    </span>
+                    <span className="stat-label"> · </span>
+                    <span className="mono">
+                      {t("pac.ruleCount", {
+                        n: pacStatus?.rule_count ?? 0,
+                      })}
+                    </span>
+                  </div>
                 </div>
-                <div className="field-hint muted">
-                  <span className="stat-label">{t("pac.url")}</span>{" "}
-                  <code className="mono">{pacStatus?.url || "—"}</code>
-                  <span className="stat-label"> · {t("pac.lastUpdate")}</span>{" "}
-                  <span className="mono">
-                    {pacStatus?.last_update
-                      ? new Date(pacStatus.last_update).toLocaleString()
-                      : t("pac.never")}
+
+                <label className="field">
+                  <span>{t("pac.sourcePreset")}</span>
+                  <SolidSelect
+                    value={
+                      pacPresets.find((p) => p.url === pacSourceUrl)?.id ??
+                      "custom"
+                    }
+                    options={[
+                      ...pacPresets.map((p) => ({
+                        value: p.id,
+                        label: p.label,
+                      })),
+                      { value: "custom", label: t("pac.sourceCustom") },
+                    ]}
+                    onChange={(id) => {
+                      const preset = pacPresets.find((p) => p.id === id);
+                      if (preset) setPacSourceUrl(preset.url);
+                    }}
+                  />
+                </label>
+
+                <label className="field">
+                  <span>{t("pac.sourceTitle")}</span>
+                  <input
+                    className="config-paste mono"
+                    type="text"
+                    spellCheck={false}
+                    value={pacSourceUrl}
+                    onChange={(e) => setPacSourceUrl(e.target.value)}
+                  />
+                  <span className="field-hint muted">{t("pac.sourceHint")}</span>
+                </label>
+
+                <label className="field">
+                  <span>{t("pac.port")}</span>
+                  <input
+                    className="config-paste mono"
+                    type="number"
+                    min={1}
+                    max={65535}
+                    value={pacPort}
+                    onChange={(e) => setPacPort(e.target.value)}
+                  />
+                  <span className="field-hint muted">{t("pac.portHint")}</span>
+                </label>
+
+                <label className="field">
+                  <span>{t("pac.autoUpdate")}</span>
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "0.6rem",
+                    }}
+                  >
+                    <GlassSwitchControl
+                      checked={pacAutoUpdate}
+                      ready={pacStatus !== null}
+                      onChange={setPacAutoUpdate}
+                    />
+                    <SolidSelect
+                      value={String(pacIntervalHours)}
+                      options={pacIntervalOptions}
+                      disabled={!pacAutoUpdate}
+                      onChange={(v) => setPacIntervalHours(Number(v))}
+                    />
+                  </div>
+                  <span className="field-hint muted">
+                    {t("pac.autoUpdateHint")}
                   </span>
-                  <span className="stat-label"> · {t("pac.domainCount")}</span>{" "}
-                  <span className="mono">
-                    {pacStatus?.domain_count ?? pacList?.domains.length ?? 0}
-                  </span>
+                </label>
+
+                <div
+                  className="field field-span-2"
+                  style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}
+                >
+                  <GlassButton
+                    icon="💾"
+                    variant="primary"
+                    disabled={pacSettingsSaving}
+                    onClick={() => void savePacSettings()}
+                  >
+                    {pacSettingsSaving
+                      ? t("pac.saving")
+                      : t("pac.settingsSave")}
+                  </GlassButton>
+                  <GlassButton
+                    icon="↻"
+                    disabled={pacRefreshing}
+                    onClick={() => void onRefreshGfwlist()}
+                  >
+                    {pacRefreshing ? t("pac.refreshing") : t("pac.refresh")}
+                  </GlassButton>
+                  <GlassButton
+                    icon="👁"
+                    disabled={pacPreviewLoading}
+                    onClick={() => void onPreviewPac()}
+                  >
+                    {t("pac.preview")}
+                  </GlassButton>
+                  <GlassButton
+                    icon="🗑"
+                    variant="danger"
+                    disabled={pacClearing}
+                    onClick={() => void onClearGfwlist()}
+                  >
+                    {pacClearing ? t("pac.clearing") : t("pac.clear")}
+                  </GlassButton>
                 </div>
               </div>
 
-              <label className="field">
-                <span>{t("pac.domains")}</span>
-                <textarea
-                  className="config-paste mono"
-                  rows={6}
-                  placeholder="google.com"
-                  spellCheck={false}
-                  value={(pacList?.domains ?? []).join("\n")}
-                  onChange={(e) =>
-                    setPacList((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            domains: e.target.value.split(/\r?\n/),
-                          }
-                        : prev,
-                    )
-                  }
-                />
-                <span className="field-hint muted">
-                  {t("pac.domainsHint")}
-                </span>
-              </label>
+              {/* ---- Routing list ---- */}
+              <div className="card settings-form settings-form-grid">
+                <label className="field field-span-2">
+                  <span>
+                    {t("pac.gfwlistDomains")}{" "}
+                    <span className="stat-label">
+                      ·{" "}
+                      {t("pac.gfwlistCount", {
+                        n: pacStatus?.gfwlist_count ?? 0,
+                      })}
+                      {" · "}
+                      {t("pac.customCount", {
+                        n: pacStatus?.custom_count ?? 0,
+                      })}
+                    </span>
+                  </span>
+                  <textarea
+                    className="config-paste mono"
+                    rows={4}
+                    readOnly
+                    spellCheck={false}
+                    value={(pacList?.gfwlist_domains ?? []).join("\n")}
+                    placeholder={t("pac.gfwlistEmpty")}
+                  />
+                  <span className="field-hint muted">{t("pac.clearHint")}</span>
+                </label>
 
-              <label className="field">
-                <span>{t("pac.ipCidrs")}</span>
-                <textarea
-                  className="config-paste mono"
-                  rows={6}
-                  placeholder="1.2.3.4
+                <label className="field">
+                  <span>{t("pac.domains")}</span>
+                  <textarea
+                    className="config-paste mono"
+                    rows={6}
+                    placeholder="google.com"
+                    spellCheck={false}
+                    value={(pacList?.domains ?? []).join("\n")}
+                    onChange={(e) =>
+                      setPacList((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              domains: e.target.value.split(/\r?\n/),
+                            }
+                          : prev,
+                      )
+                    }
+                  />
+                  <span className="field-hint muted">
+                    {t("pac.domainsHint")}
+                  </span>
+                </label>
+
+                <label className="field">
+                  <span>{t("pac.ipCidrs")}</span>
+                  <textarea
+                    className="config-paste mono"
+                    rows={6}
+                    placeholder="1.2.3.4
 10.0.0.0/8"
-                  spellCheck={false}
-                  value={(pacList?.ip_cidrs ?? []).join("\n")}
-                  onChange={(e) =>
-                    setPacList((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            ip_cidrs: e.target.value.split(/\r?\n/),
-                          }
-                        : prev,
-                    )
-                  }
-                />
-                <span className="field-hint muted">
-                  {t("pac.ipCidrsHint")}
-                </span>
-              </label>
+                    spellCheck={false}
+                    value={(pacList?.ip_cidrs ?? []).join("\n")}
+                    onChange={(e) =>
+                      setPacList((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              ip_cidrs: e.target.value.split(/\r?\n/),
+                            }
+                          : prev,
+                      )
+                    }
+                  />
+                  <span className="field-hint muted">
+                    {t("pac.ipCidrsHint")}
+                  </span>
+                </label>
 
-              <label className="field">
-                <span>{t("pac.suffixes")}</span>
-                <textarea
-                  className="config-paste mono"
-                  rows={6}
-                  placeholder=".githubusercontent.com"
-                  spellCheck={false}
-                  value={(pacList?.suffixes ?? []).join("\n")}
-                  onChange={(e) =>
-                    setPacList((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            suffixes: e.target.value.split(/\r?\n/),
-                          }
-                        : prev,
-                    )
-                  }
-                />
-                <span className="field-hint muted">
-                  {t("pac.suffixesHint")}
-                </span>
-              </label>
+                <label className="field">
+                  <span>{t("pac.suffixes")}</span>
+                  <textarea
+                    className="config-paste mono"
+                    rows={6}
+                    placeholder=".githubusercontent.com"
+                    spellCheck={false}
+                    value={(pacList?.suffixes ?? []).join("\n")}
+                    onChange={(e) =>
+                      setPacList((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              suffixes: e.target.value.split(/\r?\n/),
+                            }
+                          : prev,
+                      )
+                    }
+                  />
+                  <span className="field-hint muted">
+                    {t("pac.suffixesHint")}
+                  </span>
+                </label>
 
-              <label className="field">
-                <span>{t("pac.regions")}</span>
-                <textarea
-                  className="config-paste mono"
-                  rows={6}
-                  placeholder="US
+                <label className="field">
+                  <span>{t("pac.regions")}</span>
+                  <textarea
+                    className="config-paste mono"
+                    rows={6}
+                    placeholder="US
 HK"
-                  spellCheck={false}
-                  value={(pacList?.regions ?? []).join("\n")}
-                  onChange={(e) =>
-                    setPacList((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            regions: e.target.value.split(/\r?\n/),
-                          }
-                        : prev,
-                    )
-                  }
-                />
-                <span className="field-hint muted">
-                  {t("pac.regionsHint")}
-                </span>
-              </label>
+                    spellCheck={false}
+                    value={(pacList?.regions ?? []).join("\n")}
+                    onChange={(e) =>
+                      setPacList((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              regions: e.target.value.split(/\r?\n/),
+                            }
+                          : prev,
+                      )
+                    }
+                  />
+                  <span className="field-hint muted">
+                    {t("pac.regionsHint")}
+                  </span>
+                </label>
 
+                <div
+                  className="field field-span-2"
+                  style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}
+                >
+                  <GlassButton
+                    icon="💾"
+                    disabled={pacSaving || !pacList}
+                    onClick={() => void savePacList()}
+                  >
+                    {pacSaving ? t("pac.saving") : t("pac.save")}
+                  </GlassButton>
+                </div>
+              </div>
+            </>
+          )}
+
+          {pacPreview !== null && (
+            <div
+              className="modal-backdrop"
+              role="dialog"
+              aria-modal="true"
+              onClick={() => setPacPreview(null)}
+            >
               <div
-                className="field field-span-2"
-                style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}
+                className="card"
+                style={{
+                  maxWidth: "min(900px, 90vw)",
+                  maxHeight: "80vh",
+                  overflow: "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.6rem",
+                }}
+                onClick={(e) => e.stopPropagation()}
               >
-                <GlassButton
-                  icon="💾"
-                  disabled={pacSaving || !pacList}
-                  onClick={() => void savePacList()}
-                >
-                  {pacSaving ? t("pac.saving") : t("pac.save")}
-                </GlassButton>
-                <GlassButton
-                  icon="↻"
-                  disabled={pacRefreshing}
-                  onClick={() => void onRefreshGfwlist()}
-                >
-                  {pacRefreshing
-                    ? t("pac.refreshing")
-                    : t("pac.refresh")}
-                </GlassButton>
+                <div className="sys-proxy-title">{t("pac.previewTitle")}</div>
+                <textarea
+                  className="config-paste mono"
+                  readOnly
+                  spellCheck={false}
+                  rows={22}
+                  value={pacPreviewLoading ? t("pac.previewLoading") : pacPreview}
+                />
+                <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                  <GlassButton onClick={() => setPacPreview(null)}>
+                    {t("pac.close")}
+                  </GlassButton>
+                </div>
               </div>
             </div>
           )}

@@ -263,6 +263,9 @@ pub fn run() {
             // sing-box startup never blocks on remote downloads.
             remote_rule_auto::spawn(app.handle().clone());
 
+            // PAC gfwlist auto-update (per interval, default 24h, opt-in).
+            pac::auto::spawn(app.handle().clone());
+
             // Smart node switch (docs/auto.md): passive + on-demand probe.
             smart_switch::spawn(app.handle().clone());
 
@@ -475,6 +478,10 @@ pub fn run() {
             commands::update_pac_list,
             commands::refresh_gfwlist,
             commands::get_pac_status,
+            commands::list_pac_source_presets,
+            commands::update_pac_settings,
+            commands::get_pac_preview,
+            commands::clear_gfwlist,
             commands::get_dns_settings,
             commands::update_dns_settings,
             commands::reset_dns_defaults,

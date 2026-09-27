@@ -34,6 +34,7 @@ import type {
   ExitIpInfo,
   HostsEntry,
   PacList,
+  PacSourcePreset,
   PacStatus,
 } from "./types";
 import { trackCoreBusy } from "./coreBusy";
@@ -781,7 +782,7 @@ export function updatePacList(list: PacList) {
   return invoke<PacList>("update_pac_list", { list });
 }
 
-/** Re-pull the upstream GFWList and merge it into the PAC list. */
+/** Re-pull the upstream GFWList and replace the upstream-synced domains. */
 export function refreshGfwlist() {
   return invoke<PacList>("refresh_gfwlist");
 }
@@ -789,6 +790,36 @@ export function refreshGfwlist() {
 /** Live PAC service state (kind / enabled / url / counts / last update). */
 export function getPacStatus() {
   return invoke<PacStatus>("get_pac_status");
+}
+
+/** Built-in gfwlist mirrors (GitHub raw / jsDelivr / Fastly). */
+export function listPacSourcePresets() {
+  return invoke<PacSourcePreset[]>("list_pac_source_presets");
+}
+
+/** Update PAC settings: source URL / auto-update / interval / port. */
+export function updatePacSettings(patch: {
+  sourceUrl?: string;
+  autoUpdate?: boolean;
+  updateIntervalHours?: number;
+  pacPort?: number;
+}) {
+  return invoke<PacStatus>("update_pac_settings", {
+    sourceUrl: patch.sourceUrl ?? null,
+    autoUpdate: patch.autoUpdate ?? null,
+    updateIntervalHours: patch.updateIntervalHours ?? null,
+    pacPort: patch.pacPort ?? null,
+  });
+}
+
+/** The PAC script currently served by the local PAC service. */
+export function getPacPreview() {
+  return invoke<string>("get_pac_preview");
+}
+
+/** Drop upstream gfwlist domains, keeping user-owned ones. */
+export function clearGfwlist() {
+  return invoke<PacList>("clear_gfwlist");
 }
 
 /** rule | global | direct — restarts core when running. */

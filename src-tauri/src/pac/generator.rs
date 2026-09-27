@@ -23,8 +23,9 @@ pub fn generate_pac(list: &PacList, proxy_host: &str, proxy_port: u16) -> String
     let mut rules: Vec<String> = Vec::new();
 
     // 域名（后缀匹配）：统一去前导点、加一个点前缀。
-    for domain in &list.domains {
-        let d = normalize_dot_domain(domain);
+    // 自定义域名与 gfwlist 上游域名合并去重后再生成，避免重复规则。
+    for domain in list.all_domains() {
+        let d = normalize_dot_domain(&domain);
         if !d.is_empty() {
             rules.push(format!(
                 "    if (dnsDomainIs(host, \".{d}\")) return PROXY;"
@@ -82,8 +83,41 @@ pub fn generate_pac(list: &PacList, proxy_host: &str, proxy_port: u16) -> String
     out
 }
 
-/// 地区 → 预置 CIDR 段。
+/// 统计名单会生成多少条 PAC 匹配规则。
 ///
+/// 与 [`generate_pac`] 的入口口径一致：域名合并去重、IP/CIDR 只算能解析的、
+/// 地区按展开后的 CIDR 条数计。供 UI 展示「规则数」用。
+pub fn count_pac_rules(list: &PacList) -> usize {
+    let mut count = list.all_domains().len();
+
+    for item in &list.ip_cidrs {
+        let valid = if item.contains('/') {
+            split_cidr(item).is_some()
+        } else {
+            is_valid_ipv4(item.trim())
+        };
+        if valid {
+            count += 1;
+        }
+    }
+
+    for suffix in &list.suffixes {
+        if !normalize_dot_domain(suffix).is_empty() {
+            count += 1;
+        }
+    }
+
+    for region in &list.regions {
+        count += region_cidrs(region)
+            .iter()
+            .filter(|cidr| split_cidr(cidr).is_some())
+            .count();
+    }
+
+    count
+}
+
+/// 地区 → 预置 CIDR 段。
 /// 内置少量代表性网段（非全量，仅作便捷预置）：香港 / 台湾。未知地区返回空切片。
 pub fn region_cidrs(region: &str) -> &'static [&'static str] {
     match region {
@@ -160,6 +194,41 @@ fn is_valid_ipv4(s: &str) -> bool {
 mod tests {
     use super::*;
     use crate::pac::PacList;
+
+    #[test]
+    fn gfwlist_domains_are_emitted_and_deduplicated_against_custom() {
+        let list = PacList {
+            domains: vec!["shared.com".into()],
+            gfwlist_domains: vec!["shared.com".into(), "google.com".into()],
+            ..PacList::default()
+        };
+        let script = generate_pac(&list, "127.0.0.1", 2080);
+        // shared.com 只出现一次（自定义与上游重复）。
+        assert_eq!(script.matches("dnsDomainIs(host, \".shared.com\")").count(), 1);
+        assert!(script.contains("dnsDomainIs(host, \".google.com\")"));
+        assert_eq!(count_pac_rules(&list), 2);
+    }
+
+    #[test]
+    fn count_pac_rules_matches_generated_rule_lines() {
+        let list = PacList {
+            domains: vec!["a.com".into(), "  ".into()],
+            gfwlist_domains: vec!["b.com".into()],
+            ip_cidrs: vec!["1.2.3.4".into(), "10.0.0.0/8".into(), "bad/garbage".into()],
+            suffixes: vec![".githubusercontent.com".into(), String::new()],
+            regions: vec!["hk".into(), "unknown".into()],
+        };
+        let script = generate_pac(&list, "127.0.0.1", 2080);
+        let emitted = script
+            .lines()
+            .filter(|line| line.trim_start().starts_with("if ("))
+            .count();
+        assert_eq!(
+            count_pac_rules(&list),
+            emitted,
+            "计数必须与实际生成的规则行数一致"
+        );
+    }
 
     #[test]
     fn cidr_to_mask_converts_common_prefixes() {

@@ -258,6 +258,15 @@ pub struct AppSettings {
     /// gfwlist 上次刷新时间戳（unix 秒）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pac_last_update: Option<u64>,
+    /// gfwlist 更新地址（可自定义，默认上游 GitHub raw）。
+    #[serde(default = "default_pac_source_url")]
+    pub pac_source_url: String,
+    /// 是否按间隔自动更新 gfwlist。
+    #[serde(default)]
+    pub pac_auto_update: bool,
+    /// 自动更新间隔（小时），最小 1。
+    #[serde(default = "default_pac_update_interval_hours")]
+    pub pac_update_interval_hours: u32,
     /// TUN TCP/IP stack: `system` | `gvisor` | `mixed` (default mixed).
     #[serde(default = "default_tun_stack")]
     pub tun_stack: String,
@@ -405,6 +414,14 @@ fn default_pac_port() -> u16 {
     2085
 }
 
+fn default_pac_source_url() -> String {
+    crate::pac::default_source_url()
+}
+
+fn default_pac_update_interval_hours() -> u32 {
+    24
+}
+
 fn default_runtime_source() -> String {
     "generated".into()
 }
@@ -523,6 +540,9 @@ impl Default for AppSettings {
             pac_port: default_pac_port(),
             pac_list: crate::pac::PacList::default(),
             pac_last_update: None,
+            pac_source_url: default_pac_source_url(),
+            pac_auto_update: false,
+            pac_update_interval_hours: default_pac_update_interval_hours(),
             tun_stack: default_tun_stack(),
             tun_ipv6_enabled: false,
             block_quic: false,

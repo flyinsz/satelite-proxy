@@ -19,10 +19,24 @@ pub struct PacStatus {
     pub enabled: bool,
     /// 系统代理指向的 PAC 脚本 URL。
     pub url: String,
-    /// 当前 PAC 名单中的域名数。
+    /// 本地 PAC 服务监听端口。
+    pub port: u16,
+    /// 当前 PAC 名单中的域名总数（自定义 + gfwlist 上游，去重后）。
     pub domain_count: usize,
+    /// 其中来自 gfwlist 上游的域名数。
+    pub gfwlist_count: usize,
+    /// 其中用户自定义的域名数。
+    pub custom_count: usize,
     /// gfwlist 上次刷新时间戳（unix 秒）。
     pub last_update: Option<u64>,
+    /// 当前生效的 gfwlist 更新地址。
+    pub source_url: String,
+    /// 是否开启自动更新。
+    pub auto_update: bool,
+    /// 自动更新间隔（小时）。
+    pub update_interval_hours: u32,
+    /// PAC 脚本生成的规则条数（域名 + IP + 后缀 + 地区展开）。
+    pub rule_count: usize,
 }
 
 const KERNEL_SELECTION_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -1860,23 +1874,30 @@ impl AppState {
 
     /// 拉取 gfwlist 并合并进 PAC 名单（去重），更新刷新时间戳。
     ///
-    /// 网络拉取在锁外完成（最多 30s），避免长时间占用 store/runtime 锁；
-    /// reqwest 若在 block_on 下报 runtime 错误会回退到 ureq 同步拉取。
+    /// 使用设置里配置的更新地址。网络拉取在锁外完成（最多 30s），避免长
+    /// 时间占用 store/runtime 锁；reqwest 若在 block_on 下报 runtime 错误
+    /// 会回退到 ureq 同步拉取。
     pub fn refresh_gfwlist(&self) -> AppResult<crate::pac::PacList> {
-        let url = "https://raw.githubusercontent.com/gfwlist/gfwlist/master/gfwlist.txt";
+        let url = self.with_store(|store| Ok(store.settings.pac_source_url.clone()))?;
+        self.refresh_gfwlist_from(&url)
+    }
+
+    /// 从指定地址拉取 gfwlist 并**整体替换** PAC 名单里的 `gfwlist_domains`。
+    ///
+    /// 替换而非追加：反复刷新不会让名单无限膨胀，也不会冲掉用户在
+    /// `domains` 里手改的内容。
+    pub fn refresh_gfwlist_from(&self, url: &str) -> AppResult<crate::pac::PacList> {
+        if url.trim().is_empty() {
+            return Err(crate::error::AppError::Config(
+                "gfwlist 更新地址不能为空".into(),
+            ));
+        }
         let fetched = fetch_gfwlist_blocking(url)?;
 
         let mut runtime = self.lock_runtime();
         let _persistence = self.lock_store_persistence();
         let mut store = self.lock_store();
-        // 已有域名保留顺序，新增域名去重追加。
-        let mut seen: std::collections::HashSet<String> =
-            store.settings.pac_list.domains.iter().cloned().collect();
-        for domain in fetched {
-            if seen.insert(domain.clone()) {
-                store.settings.pac_list.domains.push(domain);
-            }
-        }
+        store.settings.pac_list.gfwlist_domains = fetched;
         store.settings.pac_last_update = Some(
             SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -1886,6 +1907,24 @@ impl AppState {
         let out = store.settings.pac_list.clone();
         store.save(&self.store_path)?;
         // 名单已持久化；PAC 服务重建失败仅影响运行态，不阻塞保存。
+        if runtime.pac_active {
+            runtime.refresh_pac_content(&store)?;
+        }
+        Ok(out)
+    }
+
+    /// 置空 gfwlist 上游域名（保留自定义域名与其它名单项）。
+    ///
+    /// 用于「先清空再重新拉取」的场景：上游换了地址、需要丢弃旧名单时，
+    /// 避免残留旧条目与新来源混在一起。
+    pub fn clear_gfwlist(&self) -> AppResult<crate::pac::PacList> {
+        let mut runtime = self.lock_runtime();
+        let _persistence = self.lock_store_persistence();
+        let mut store = self.lock_store();
+        store.settings.pac_list.gfwlist_domains.clear();
+        store.settings.pac_last_update = None;
+        let out = store.settings.pac_list.clone();
+        store.save(&self.store_path)?;
         if runtime.pac_active {
             runtime.refresh_pac_content(&store)?;
         }
@@ -1903,8 +1942,105 @@ impl AppState {
                 "http://127.0.0.1:{}/proxy.pac",
                 store.settings.pac_port
             ),
-            domain_count: store.settings.pac_list.domains.len(),
+            port: store.settings.pac_port,
+            domain_count: store.settings.pac_list.domain_count(),
+            gfwlist_count: store.settings.pac_list.gfwlist_domains.len(),
+            custom_count: store.settings.pac_list.domains.len(),
             last_update: store.settings.pac_last_update,
+            source_url: store.settings.pac_source_url.clone(),
+            auto_update: store.settings.pac_auto_update,
+            update_interval_hours: store.settings.pac_update_interval_hours,
+            rule_count: crate::pac::generator::count_pac_rules(&store.settings.pac_list),
+        })
+    }
+
+    /// 生成当前生效的 PAC 脚本内容（供 UI 预览 / 排障）。
+    pub fn pac_preview(&self) -> AppResult<String> {
+        let store = self.lock_store();
+        let port = store.settings.mixed_port;
+        Ok(crate::pac::generator::generate_pac(
+            &store.settings.pac_list,
+            "127.0.0.1",
+            port,
+        ))
+    }
+
+    /// 更新 PAC 相关设置（更新地址 / 自动更新 / 间隔 / 端口）。
+    ///
+    /// `pac_port` 变更且 PAC 服务正在运行时重建服务，使新端口立即生效。
+    /// 端口占用等失败会返回错误，但设置已持久化（与 `set_pac_list` 一致）。
+    pub fn update_pac_settings(
+        &self,
+        source_url: Option<String>,
+        auto_update: Option<bool>,
+        update_interval_hours: Option<u32>,
+        pac_port: Option<u16>,
+    ) -> AppResult<PacStatus> {
+        let mut runtime = self.lock_runtime();
+        let _persistence = self.lock_store_persistence();
+        let mut store = self.lock_store();
+
+        if let Some(url) = source_url {
+            let url = url.trim();
+            if url.is_empty() {
+                return Err(crate::error::AppError::Config(
+                    "gfwlist 更新地址不能为空".into(),
+                ));
+            }
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                return Err(crate::error::AppError::Config(
+                    "gfwlist 更新地址需以 http:// 或 https:// 开头".into(),
+                ));
+            }
+            store.settings.pac_source_url = url.to_string();
+        }
+        if let Some(v) = auto_update {
+            store.settings.pac_auto_update = v;
+        }
+        if let Some(hours) = update_interval_hours {
+            store.settings.pac_update_interval_hours = hours.max(1);
+        }
+
+        let mut port_changed = false;
+        if let Some(port) = pac_port {
+            if port == 0 {
+                return Err(crate::error::AppError::Config("PAC 端口无效".into()));
+            }
+            // 与内核主端口 / Clash API 端口冲突会让系统代理指向死端口。
+            if port == store.settings.mixed_port || port == store.settings.api_port {
+                return Err(crate::error::AppError::Config(format!(
+                    "PAC 端口 {port} 与内核监听端口冲突"
+                )));
+            }
+            if port != store.settings.pac_port {
+                store.settings.pac_port = port;
+                port_changed = true;
+            }
+        }
+
+        store.save(&self.store_path)?;
+        // 端口变更且 PAC 服务在跑：重建服务并重指系统代理。
+        if port_changed && runtime.pac_active {
+            runtime.refresh_pac_content(&store)?;
+            runtime.set_system_proxy(&store, false)?;
+            runtime.set_system_proxy(&store, true)?;
+        }
+        Ok(PacStatus {
+            kind: store.settings.system_proxy_kind.as_str().to_string(),
+            enabled: runtime.pac_active,
+            url: format!(
+                "http://127.0.0.1:{}/proxy.pac",
+                store.settings.pac_port
+            ),
+            port: store.settings.pac_port,
+            domain_count: store.settings.pac_list.domain_count(),
+            gfwlist_count: store.settings.pac_list.gfwlist_domains.len(),
+            custom_count: store.settings.pac_list.domains.len(),
+            last_update: store.settings.pac_last_update,
+            source_url: store.settings.pac_source_url.clone(),
+            auto_update: store.settings.pac_auto_update,
+            update_interval_hours: store.settings.pac_update_interval_hours,
+            rule_count: crate::pac::generator::count_pac_rules(&store.settings.pac_list),
         })
     }
 
@@ -2174,12 +2310,12 @@ pub fn spawn_core_watchdog(app: tauri::AppHandle) {
         .ok();
 }
 
-/// 阻塞式拉取并解析 gfwlist（base64）。
+/// 阻塞式拉取并解析 gfwlist（base64，上游每 64 字符换行）。
 ///
 /// 优先用 `tauri::async_runtime::block_on(reqwest)` —— 本函数只会在
 /// spawn_blocking 线程（非 tokio worker）里被调用，block_on 启动嵌套
 /// runtime 是安全的。若 reqwest 仍报 nested-runtime 错误，回退到 ureq
-/// 同步拉取并复用 `crate::pac::gfwlist::parse_gfwlist_text` 解码。
+/// 同步拉取，两条路径共用 [`crate::pac::gfwlist::decode_gfwlist_body`]。
 fn fetch_gfwlist_blocking(url: &str) -> AppResult<Vec<String>> {
     match tauri::async_runtime::block_on(crate::pac::gfwlist::fetch_gfwlist(url)) {
         Ok(domains) => Ok(domains),
@@ -2198,15 +2334,8 @@ fn fetch_gfwlist_blocking(url: &str) -> AppResult<Vec<String>> {
                 .map_err(|error| {
                     crate::error::AppError::Fetch(format!("read gfwlist body: {error}"))
                 })?;
-            use base64::Engine as _;
-            let decoded = base64::engine::general_purpose::STANDARD
-                .decode(body.trim())
-                .map_err(|error| {
-                    crate::error::AppError::Fetch(format!("base64 decode gfwlist: {error}"))
-                })?;
-            let text = String::from_utf8(decoded).map_err(|error| {
-                crate::error::AppError::Fetch(format!("gfwlist is not valid utf-8: {error}"))
-            })?;
+            let text = crate::pac::gfwlist::decode_gfwlist_body(&body)
+                .map_err(crate::error::AppError::Fetch)?;
             Ok(crate::pac::gfwlist::parse_gfwlist_text(&text))
         }
     }
