@@ -119,33 +119,36 @@ pub fn list_subscriptions(state: State<'_, AppState>) -> Result<Vec<Subscription
         .map_err(|e| e.to_string())
 }
 
-/// One clash `rule-provider` from a subscription, tagged with its owning
-/// subscription for the "import as rule set" picker.
+/// One subscription's clash `rule-providers`, grouped for the "import as rule
+/// set" picker (import happens per-subscription, not per-provider).
 #[derive(Debug, Clone, Serialize)]
-pub struct SubscriptionRuleProvider {
+pub struct SubscriptionRuleProviders {
     pub subscription_id: String,
     pub subscription_name: String,
-    pub provider: crate::domain::ClashRuleProvider,
+    /// Whether this subscription is currently enabled (the "current" one in
+    /// single-select mode) — the picker sorts it first.
+    pub enabled: bool,
+    pub providers: Vec<crate::domain::ClashRuleProvider>,
 }
 
-/// All clash `rule-providers` discovered across subscriptions (custom
-/// profiles excluded — they are full configs, not node subscriptions).
+/// All clash `rule-providers` discovered across subscriptions, grouped by
+/// owning subscription (custom profiles excluded — they are full configs, not
+/// node subscriptions). Subscriptions without any provider are omitted.
 #[tauri::command(async)]
 pub fn list_subscription_rule_providers(
     state: State<'_, AppState>,
-) -> Result<Vec<SubscriptionRuleProvider>, String> {
+) -> Result<Vec<SubscriptionRuleProviders>, String> {
     state
         .with_store(|store| {
             Ok(store
                 .subscriptions
                 .iter()
-                .filter(|s| s.source.contributes_nodes())
-                .flat_map(|s| {
-                    s.rule_providers.iter().map(|p| SubscriptionRuleProvider {
-                        subscription_id: s.id.clone(),
-                        subscription_name: s.name.clone(),
-                        provider: p.clone(),
-                    })
+                .filter(|s| s.source.contributes_nodes() && !s.rule_providers.is_empty())
+                .map(|s| SubscriptionRuleProviders {
+                    subscription_id: s.id.clone(),
+                    subscription_name: s.name.clone(),
+                    enabled: s.enabled,
+                    providers: s.rule_providers.clone(),
                 })
                 .collect())
         })

@@ -848,6 +848,140 @@ pub async fn refresh_remote_rule_set(app: AppHandle, id: String) -> Result<RuleS
     crate::remote_rule_auto::refresh(app, id).await
 }
 
+/// Result of a per-subscription batch import of clash rule-providers.
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportRuleProvidersSummary {
+    /// Rule sets successfully downloaded and enabled.
+    pub imported: usize,
+    /// Providers skipped because a rule set with that name already exists.
+    pub skipped_duplicates: usize,
+    /// Per-id download failures (the set is kept but stays disabled).
+    pub failed: Vec<String>,
+}
+
+fn clash_target_to_rule_target(target: &str) -> RuleTarget {
+    match target {
+        "direct" => RuleTarget::Direct,
+        "reject" => RuleTarget::Block,
+        _ => RuleTarget::Proxy,
+    }
+}
+
+fn clash_interval_to_update_interval(seconds: Option<u64>) -> &'static str {
+    match seconds {
+        Some(s) if s >= 86_400 => "24h",
+        Some(s) if s >= 43_200 => "12h",
+        Some(s) if s >= 3_600 => "1h",
+        _ => "disabled",
+    }
+}
+
+/// Import every clash `rule-provider` of one subscription as a remote rule
+/// set: create → download (clash→sing-box conversion happens on download) →
+/// enable, with a single debounced core restart at the end. Already-imported
+/// names are skipped; individual download failures leave that set disabled.
+#[tauri::command]
+pub async fn import_subscription_rule_providers(
+    app: AppHandle,
+    subscription_id: String,
+) -> Result<ImportRuleProvidersSummary, String> {
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| "app state unavailable".to_string())?;
+
+    let (ids, skipped_duplicates) = state
+        .with_store_mut(|store| {
+            let sub = store
+                .subscriptions
+                .iter()
+                .find(|s| s.id == subscription_id)
+                .ok_or_else(|| crate::error::AppError::NotFound(subscription_id.clone()))?;
+            let providers = sub.rule_providers.clone();
+            if providers.is_empty() {
+                return Err(crate::error::AppError::Config(
+                    "该订阅没有可导入的规则集".into(),
+                ));
+            }
+            let mut ids = Vec::new();
+            let mut skipped_duplicates = 0usize;
+            for p in &providers {
+                if store
+                    .rule_sets
+                    .iter()
+                    .any(|s| s.name.eq_ignore_ascii_case(&p.name))
+                {
+                    skipped_duplicates += 1;
+                    continue;
+                }
+                let target = clash_target_to_rule_target(&p.suggested_target);
+                let interval = clash_interval_to_update_interval(p.interval);
+                let set = store.create_remote_rule_set(
+                    &p.name,
+                    &p.url,
+                    target,
+                    interval,
+                    None,
+                    Vec::new(),
+                    Vec::new(),
+                    Vec::new(),
+                    None,
+                )?;
+                ids.push(set.id);
+            }
+            Ok((ids, skipped_duplicates))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let mut join = tokio::task::JoinSet::new();
+    for id in &ids {
+        let app = app.clone();
+        let id = id.clone();
+        join.spawn(async move {
+            let result = crate::remote_rule_auto::refresh_download(app, id.clone()).await;
+            (id, result)
+        });
+    }
+    let mut imported = 0usize;
+    let mut failed: Vec<String> = Vec::new();
+    let mut cleanup: Vec<std::path::PathBuf> = Vec::new();
+    while let Some(res) = join.join_next().await {
+        match res {
+            Ok((_id, Ok(downloaded))) => {
+                imported += 1;
+                cleanup.extend(downloaded.cleanup_after_apply);
+            }
+            Ok((id, Err(error))) => failed.push(format!("{id}: {error}")),
+            Err(error) => failed.push(format!("下载任务异常: {error}")),
+        }
+    }
+
+    // Enable only the sets whose download actually produced a cache file.
+    state
+        .with_store_mut(|store| {
+            for id in &ids {
+                if let Some(set) = store.rule_sets.iter_mut().find(|s| s.id == *id) {
+                    let ready = set
+                        .remote
+                        .as_ref()
+                        .and_then(|r| r.local_path.as_ref())
+                        .is_some();
+                    if ready {
+                        set.enabled = true;
+                    }
+                }
+            }
+            Ok(())
+        })
+        .map_err(|e| e.to_string())?;
+
+    crate::rule_apply::request_restart(app, cleanup);
+    Ok(ImportRuleProvidersSummary {
+        imported,
+        skipped_duplicates,
+        failed,
+    })
+}
+
 #[tauri::command(async)]
 pub fn delete_rule_set(
     app: AppHandle,

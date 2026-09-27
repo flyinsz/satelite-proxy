@@ -16,6 +16,7 @@ import {
   deleteRuleSet,
   getRuleSet,
   getSettings,
+  importSubscriptionRuleProviders,
   listAllNodes,
   listChains,
   listPools,
@@ -57,7 +58,7 @@ import type {
   RemoteRulePage,
   RuleTarget,
   RuleType,
-  SubscriptionRuleProvider,
+  SubscriptionRuleProviders,
 } from "../types";
 
 type RouteFinal = "proxy" | "direct" | "block";
@@ -278,10 +279,10 @@ export function RulesPage({ embedded = false }: Props) {
   const [enabled, setEnabled] = useState(true);
   const [busy, setBusy] = useState(false);
 
-  /** "Import from subscription" picker state. */
+  /** "Import from subscription" picker state (grouped per subscription). */
   const [importOpen, setImportOpen] = useState(false);
-  const [importProviders, setImportProviders] = useState<SubscriptionRuleProvider[]>([]);
-  const [importBusyNames, setImportBusyNames] = useState<Set<string>>(new Set());
+  const [importGroups, setImportGroups] = useState<SubscriptionRuleProviders[]>([]);
+  const [importBusyIds, setImportBusyIds] = useState<Set<string>>(new Set());
 
   /** New rule-set modal (window.prompt is unreliable in Tauri WebView). */
   const [newSetOpen, setNewSetOpen] = useState(false);
@@ -1327,62 +1328,42 @@ export function RulesPage({ embedded = false }: Props) {
     }
   }
 
-  /** Map a clash suggested target to the app's RuleTarget. */
-  function providerTarget(target: string): RuleTarget {
-    if (target === "direct") return "direct";
-    if (target === "reject") return "block";
-    return "proxy";
-  }
-
-  /** Map a clash refresh interval (seconds) to the app's coarse buckets. */
-  function providerInterval(
-    seconds?: number | null,
-  ): "disabled" | "1h" | "12h" | "24h" {
-    if (!seconds || seconds <= 0) return "disabled";
-    if (seconds >= 86400) return "24h";
-    if (seconds >= 43200) return "12h";
-    return "1h";
-  }
-
   async function openImportProviders() {
     setError(null);
     try {
-      setImportProviders(await listSubscriptionRuleProviders());
+      const groups = await listSubscriptionRuleProviders();
+      // Current (enabled) subscription first, others after.
+      groups.sort((a, b) => Number(b.enabled) - Number(a.enabled));
+      setImportGroups(groups);
       setImportOpen(true);
     } catch (err) {
       setError(typeof err === "string" ? err : String(err));
     }
   }
 
-  async function importProvider(p: SubscriptionRuleProvider) {
-    setImportBusyNames((current) => new Set(current).add(p.provider.name));
+  async function importSubscription(sub: SubscriptionRuleProviders) {
+    setImportBusyIds((current) => new Set(current).add(sub.subscription_id));
     setError(null);
     try {
-      const set = await createRuleSet(
-        p.provider.name,
-        p.provider.url,
-        providerTarget(p.provider.suggested_target),
-        providerInterval(p.provider.interval),
-        null,
-        null,
-        null,
-        null,
-        null,
-        null,
-      );
-      // Download → convert (clash → sing-box source) → cache → enable.
-      await refreshRemoteRuleSet(set.id);
-      await setRuleSetEnabled(set.id, true);
+      const summary = await importSubscriptionRuleProviders(sub.subscription_id);
       await reloadSets();
-      setImportProviders((current) =>
-        current.filter((x) => x.provider.name !== p.provider.name),
+      setImportGroups((current) =>
+        current.filter((x) => x.subscription_id !== sub.subscription_id),
       );
+      if (summary.failed.length > 0) {
+        setError(
+          t("rules.importFailed", {
+            n: summary.failed.length,
+            detail: summary.failed.join("、"),
+          }),
+        );
+      }
     } catch (err) {
       setError(typeof err === "string" ? err : String(err));
     } finally {
-      setImportBusyNames((current) => {
+      setImportBusyIds((current) => {
         const next = new Set(current);
-        next.delete(p.provider.name);
+        next.delete(sub.subscription_id);
         return next;
       });
     }
@@ -2038,6 +2019,7 @@ export function RulesPage({ embedded = false }: Props) {
             </GlassButton>
             <GlassButton
               icon="⇩"
+              className="import-from-sub"
               onClick={() => void openImportProviders()}
               title={t("rules.importFromSubHint")}
             >
@@ -2990,16 +2972,16 @@ export function RulesPage({ embedded = false }: Props) {
               <p className="muted" style={{ fontSize: 12, margin: 0 }}>
                 {t("rules.importHint")}
               </p>
-              {importProviders.length === 0 ? (
+              {importGroups.length === 0 ? (
                 <p className="muted" style={{ margin: 0 }}>
                   {t("rules.importEmpty")}
                 </p>
               ) : (
-                importProviders.map((p) => {
-                  const busy = importBusyNames.has(p.provider.name);
+                importGroups.map((sub) => {
+                  const busy = importBusyIds.has(sub.subscription_id);
                   return (
                     <div
-                      key={`${p.subscription_id}:${p.provider.name}`}
+                      key={sub.subscription_id}
                       style={{
                         display: "flex",
                         alignItems: "center",
@@ -3008,24 +2990,29 @@ export function RulesPage({ embedded = false }: Props) {
                       }}
                     >
                       <div style={{ minWidth: 0 }}>
-                        <div style={{ fontWeight: 500 }}>{p.provider.name}</div>
                         <div
-                          className="muted"
                           style={{
-                            fontSize: 12,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
+                            fontWeight: 500,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "0.4rem",
                           }}
                         >
-                          {p.subscription_name} · {p.provider.behavior} ·{" "}
-                          {p.provider.url}
+                          {sub.subscription_name}
+                          {sub.enabled && (
+                            <span className="pill ok" style={{ fontSize: 11 }}>
+                              {t("rules.importCurrent")}
+                            </span>
+                          )}
+                        </div>
+                        <div className="muted" style={{ fontSize: 12 }}>
+                          {t("rules.importCount", { n: sub.providers.length })}
                         </div>
                       </div>
                       <GlassButton
                         variant="primary"
                         disabled={busy}
-                        onClick={() => void importProvider(p)}
+                        onClick={() => void importSubscription(sub)}
                       >
                         {busy ? t("rules.importBusy") : t("rules.importAction")}
                       </GlassButton>

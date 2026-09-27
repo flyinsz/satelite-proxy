@@ -3153,7 +3153,7 @@ button.node-card:disabled,
 
 .ruleset-list-actions {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 0.35rem;
 }
 
@@ -3161,8 +3161,13 @@ button.node-card:disabled,
   flex: 1 1 0;
   justify-content: center;
   min-width: 0;
-  white-space: normal;
+  white-space: nowrap;
   line-height: 1.15;
+}
+
+/* "Import from subscription" takes a full row of its own. */
+.ruleset-list-actions .glass-btn.import-from-sub {
+  flex-basis: 100%;
 }
 
 .ruleset-final {

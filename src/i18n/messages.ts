@@ -814,6 +814,9 @@ const en = {
   "rules.importEmpty": "No rule-providers in your subscriptions",
   "rules.importBusy": "Importing…",
   "rules.importAction": "Import",
+  "rules.importCurrent": "Current",
+  "rules.importCount": "{n} rule sets",
+  "rules.importFailed": "{n} rule sets failed to import: {detail}",
   "rules.downloadingTooltip": "Downloading remote rule set",
   "rules.enableEmptyHint": "No effective rules yet — cannot enable",
   "rules.remoteSrsInert":
@@ -2010,6 +2013,9 @@ const zh: Record<MessageKey, string> = {
   "rules.importEmpty": "订阅里没有可导入的规则集",
   "rules.importBusy": "导入中…",
   "rules.importAction": "导入",
+  "rules.importCurrent": "当前",
+  "rules.importCount": "{n} 个规则集",
+  "rules.importFailed": "{n} 个规则集导入失败：{detail}",
   "rules.downloadingTooltip": "正在下载远程规则集",
   "rules.enableEmptyHint": "暂无可生效的规则，无法启用",
   "rules.remoteSrsInert":

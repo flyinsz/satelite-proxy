@@ -198,11 +198,20 @@ export interface ClashRuleProvider {
   suggested_target: string;
 }
 
-/** A clash rule-provider tagged with its owning subscription. */
-export interface SubscriptionRuleProvider {
+/** A clash rule-provider grouped with its owning subscription (batch import). */
+export interface SubscriptionRuleProviders {
   subscription_id: string;
   subscription_name: string;
-  provider: ClashRuleProvider;
+  /** Whether this subscription is currently enabled (sorted first). */
+  enabled: boolean;
+  providers: ClashRuleProvider[];
+}
+
+/** Result of a per-subscription batch import of rule-providers. */
+export interface ImportRuleProvidersSummary {
+  imported: number;
+  skipped_duplicates: number;
+  failed: string[];
 }
 
 export interface SubscriptionUrlEntry {

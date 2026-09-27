@@ -238,12 +238,18 @@ pub async fn refresh(app: AppHandle, id: String) -> Result<RuleSet, String> {
     Ok(downloaded.set)
 }
 
-struct DownloadedRule {
-    set: RuleSet,
-    cleanup_after_apply: Vec<std::path::PathBuf>,
+pub(crate) struct DownloadedRule {
+    pub(crate) set: RuleSet,
+    pub(crate) cleanup_after_apply: Vec<std::path::PathBuf>,
 }
 
-async fn refresh_download(app: AppHandle, id: String) -> Result<DownloadedRule, String> {
+/// Download a remote rule set without queuing a core restart — batch import
+/// downloads many sets and restarts once at the end. Callers are responsible
+/// for the final `rule_apply::request_restart`.
+pub(crate) async fn refresh_download(
+    app: AppHandle,
+    id: String,
+) -> Result<DownloadedRule, String> {
     let _active = ActiveDownload::acquire(&id)?;
     refresh_inner(&app, &id).await
 }

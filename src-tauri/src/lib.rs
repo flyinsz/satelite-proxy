@@ -506,6 +506,7 @@ pub fn run() {
             commands::create_rule_set,
             commands::update_rule_set,
             commands::refresh_remote_rule_set,
+            commands::import_subscription_rule_providers,
             commands::reorder_rule_sets,
             commands::delete_rule_set,
             commands::reset_rule_set,
