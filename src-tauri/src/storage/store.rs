@@ -1391,11 +1391,13 @@ impl AppStore {
         smart_include: Vec<String>,
         smart_exclude: Vec<String>,
         chain_id: Option<String>,
+        pool_id: Option<String>,
     ) -> AppResult<(
         Option<(String, String)>,
         Vec<String>,
         Vec<String>,
         Vec<String>,
+        Option<(String, String)>,
         Option<(String, String)>,
     )> {
         use crate::domain::{keyword_list_overlap, Rule, RuleTarget};
@@ -1460,7 +1462,23 @@ impl AppStore {
         } else {
             None
         };
-        Ok((pin, include, exclude, explicit_ids, chain_pin))
+        let pool_pin = if target == RuleTarget::Pool {
+            let pid = pool_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .ok_or_else(|| crate::error::AppError::Config("请选择节点池".into()))?;
+            let name = self
+                .pools
+                .iter()
+                .find(|pool| pool.id == pid)
+                .map(|pool| pool.name.clone())
+                .ok_or_else(|| crate::error::AppError::Config("指定的节点池不存在".into()))?;
+            Some((pid.to_string(), name))
+        } else {
+            None
+        };
+        Ok((pin, include, exclude, explicit_ids, chain_pin, pool_pin))
     }
 
     /// Apply one whole-set route target + parameters: strategy flip, set-level
@@ -1476,6 +1494,7 @@ impl AppStore {
         exclude: &[String],
         explicit_ids: &[String],
         chain_pin: &Option<(String, String)>,
+        pool_pin: &Option<(String, String)>,
     ) {
         use crate::domain::{RuleSetStrategy, RuleTarget};
         set.strategy = RuleSetStrategy::from_target(target);
@@ -1499,6 +1518,8 @@ impl AppStore {
         };
         set.chain_id = chain_pin.as_ref().map(|(id, _)| id.clone());
         set.chain_name = chain_pin.as_ref().map(|(_, name)| name.clone());
+        set.pool_id = pool_pin.as_ref().map(|(id, _)| id.clone());
+        set.pool_name = pool_pin.as_ref().map(|(_, name)| name.clone());
         if let Some(dns) = set.strategy.recommended_dns_strategy() {
             set.dns_strategy = dns;
         }
@@ -1519,16 +1540,19 @@ impl AppStore {
         smart_include: Vec<String>,
         smart_exclude: Vec<String>,
         chain_id: Option<String>,
+        pool_id: Option<String>,
     ) -> AppResult<(RuleSet, bool)> {
         use crate::domain::RuleTarget;
-        let (pin, include, exclude, explicit_ids, chain_pin) = self.resolve_set_route_params(
-            target,
-            node_id,
-            node_ids,
-            smart_include,
-            smart_exclude,
-            chain_id,
-        )?;
+        let (pin, include, exclude, explicit_ids, chain_pin, pool_pin) = self
+            .resolve_set_route_params(
+                target,
+                node_id,
+                node_ids,
+                smart_include,
+                smart_exclude,
+                chain_id,
+                pool_id,
+            )?;
         let set = self
             .rule_sets
             .iter_mut()
@@ -1542,6 +1566,7 @@ impl AppStore {
             &exclude,
             &explicit_ids,
             &chain_pin,
+            &pool_pin,
         );
         if let Some(remote) = set.remote.as_mut() {
             remote.target = target;
@@ -1562,6 +1587,8 @@ impl AppStore {
             };
             rule.chain_id = chain_pin.as_ref().map(|(id, _)| id.clone());
             rule.chain_name = chain_pin.as_ref().map(|(_, name)| name.clone());
+            rule.pool_id = pool_pin.as_ref().map(|(id, _)| id.clone());
+            rule.pool_name = pool_pin.as_ref().map(|(_, name)| name.clone());
         }
         let needs_restart = !crate::config::rule_set_is_empty_for_config(set);
         Ok((set.clone(), needs_restart))
@@ -1581,15 +1608,18 @@ impl AppStore {
         smart_include: Vec<String>,
         smart_exclude: Vec<String>,
         chain_id: Option<String>,
+        pool_id: Option<String>,
     ) -> AppResult<RuleSet> {
-        let (pin, include, exclude, explicit_ids, chain_pin) = self.resolve_set_route_params(
-            target,
-            node_id,
-            node_ids,
-            smart_include,
-            smart_exclude,
-            chain_id,
-        )?;
+        let (pin, include, exclude, explicit_ids, chain_pin, pool_pin) = self
+            .resolve_set_route_params(
+                target,
+                node_id,
+                node_ids,
+                smart_include,
+                smart_exclude,
+                chain_id,
+                pool_id,
+            )?;
         let mut set = RuleSet::new_user(name, vec![]);
         Self::apply_set_route(
             &mut set,
@@ -1599,6 +1629,7 @@ impl AppStore {
             &exclude,
             &explicit_ids,
             &chain_pin,
+            &pool_pin,
         );
         // New sets start disabled — enable once they hold effective rules.
         set.enabled = false;
@@ -1618,15 +1649,18 @@ impl AppStore {
         smart_include: Vec<String>,
         smart_exclude: Vec<String>,
         chain_id: Option<String>,
+        pool_id: Option<String>,
     ) -> AppResult<RuleSet> {
-        let (pin, include, exclude, explicit_ids, chain_pin) = self.resolve_set_route_params(
-            target,
-            node_id,
-            node_ids,
-            smart_include,
-            smart_exclude,
-            chain_id,
-        )?;
+        let (pin, include, exclude, explicit_ids, chain_pin, pool_pin) = self
+            .resolve_set_route_params(
+                target,
+                node_id,
+                node_ids,
+                smart_include,
+                smart_exclude,
+                chain_id,
+                pool_id,
+            )?;
         let mut set = RuleSet::new_remote(name, url, target);
         if let Some(remote) = set.remote.as_mut() {
             remote.update_interval = update_interval.to_string();
@@ -1639,6 +1673,7 @@ impl AppStore {
             &exclude,
             &explicit_ids,
             &chain_pin,
+            &pool_pin,
         );
         // New sets start disabled — enable after the first successful
         // download produces a cached rule file.
@@ -2506,6 +2541,7 @@ mod tests {
                 vec![],
                 vec![],
                 None,
+                None,
             )
             .unwrap();
         // Batch node → whole-set Node strategy + set-level pin; every local
@@ -2529,6 +2565,7 @@ mod tests {
                 vec!["东京".into(), "东京 ".into()],
                 vec!["香港".into()],
                 None,
+                None,
             )
             .unwrap();
         assert_eq!(updated.strategy, RuleSetStrategy::Filter);
@@ -2551,13 +2588,14 @@ mod tests {
                 vec!["东京".into()],
                 vec!["东京".into()],
                 None,
+                None,
             )
             .is_err());
 
         // Batch to direct collapses back to a plain uniform strategy and
         // clears the set-level pin / filters.
         let (updated, _) = store
-            .batch_set_rule_targets(&id, RuleTarget::Direct, None, vec![], vec![], vec![], None)
+            .batch_set_rule_targets(&id, RuleTarget::Direct, None, vec![], vec![], vec![], None, None)
             .unwrap();
         assert_eq!(updated.strategy, RuleSetStrategy::Direct);
         assert!(updated.node_id.is_none());
@@ -2626,6 +2664,7 @@ mod tests {
                 vec![],
                 vec![],
                 None,
+                None,
             )
             .unwrap();
         assert_eq!(updated.strategy, RuleSetStrategy::Node);
@@ -2647,6 +2686,7 @@ mod tests {
                 vec![],
                 vec![],
                 None,
+                None,
             )
             .unwrap();
         assert!(!updated.is_node_pool());
@@ -2662,6 +2702,7 @@ mod tests {
                 vec!["node-1".into(), "missing".into()],
                 vec![],
                 vec![],
+                None,
                 None,
             )
             .is_err());
@@ -2682,6 +2723,7 @@ mod tests {
                 vec![],
                 vec![],
                 None,
+                None,
             )
             .unwrap();
 
@@ -2693,6 +2735,7 @@ mod tests {
                 vec![],
                 vec![],
                 vec![],
+                None,
                 None,
             )
             .unwrap();
@@ -2738,6 +2781,7 @@ mod tests {
                 vec![],
                 vec![],
                 None,
+                None,
             )
             .unwrap();
         assert_eq!(updated.strategy, RuleSetStrategy::Node);
@@ -2755,6 +2799,7 @@ mod tests {
                 vec![],
                 vec!["东京".into()],
                 vec![],
+                None,
                 None,
             )
             .unwrap();
@@ -2778,6 +2823,7 @@ mod tests {
                 vec![],
                 vec![],
                 vec![],
+                None,
                 None,
             )
             .unwrap();
@@ -2805,6 +2851,7 @@ mod tests {
                 vec!["东京".into()],
                 vec![],
                 None,
+                None,
             )
             .unwrap();
         assert_eq!(set.strategy, RuleSetStrategy::Filter);
@@ -2827,6 +2874,7 @@ mod tests {
                 vec![],
                 vec![],
                 vec![],
+                None,
                 None,
             )
             .unwrap();
@@ -2858,6 +2906,7 @@ mod tests {
                 vec![],
                 vec![],
                 vec![],
+                None,
                 None,
             )
             .unwrap();
@@ -3788,6 +3837,7 @@ mod tests {
                 vec![],
                 vec![],
                 None,
+                None,
             )
             .unwrap();
         assert_eq!(store.rule_sets[0].id, local.id);
@@ -3802,6 +3852,7 @@ mod tests {
                 vec![],
                 vec![],
                 vec![],
+                None,
                 None,
             )
             .unwrap();

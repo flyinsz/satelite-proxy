@@ -921,6 +921,7 @@ export function createRuleSet(
   smartInclude?: string[] | null,
   smartExclude?: string[] | null,
   chainId?: string | null,
+  poolId?: string | null,
   dnsStrategy?: RuleSetDnsStrategy | null,
 ) {
   return invoke<RuleSet>("create_rule_set", {
@@ -933,6 +934,7 @@ export function createRuleSet(
     smartInclude: smartInclude ?? null,
     smartExclude: smartExclude ?? null,
     chainId: chainId ?? null,
+    poolId: poolId ?? null,
     dnsStrategy: dnsStrategy ?? null,
   });
 }
@@ -961,12 +963,13 @@ export function updateRuleSet(
  * `nodeIds` carries the full multi-pick selection (2+ = explicit pool). */
 export function batchSetRuleTargets(
   id: string,
-  target: "proxy" | "direct" | "block" | "node" | "smart" | "chain",
+  target: "proxy" | "direct" | "block" | "node" | "smart" | "chain" | "pool",
   nodeId?: string | null,
   nodeIds?: string[] | null,
   smartInclude?: string[] | null,
   smartExclude?: string[] | null,
   chainId?: string | null,
+  poolId?: string | null,
 ) {
   return invoke<RuleSet>("batch_set_rule_targets", {
     id,
@@ -976,6 +979,7 @@ export function batchSetRuleTargets(
     smartInclude: smartInclude ?? null,
     smartExclude: smartExclude ?? null,
     chainId: chainId ?? null,
+    poolId: poolId ?? null,
   });
 }
 

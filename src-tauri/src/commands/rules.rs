@@ -585,6 +585,7 @@ pub fn batch_set_rule_targets(
     smart_include: Option<Vec<String>>,
     smart_exclude: Option<Vec<String>>,
     chain_id: Option<String>,
+    pool_id: Option<String>,
 ) -> Result<RuleSet, String> {
     let (set, needs_restart) = state
         .with_store_mut(|store| {
@@ -596,6 +597,7 @@ pub fn batch_set_rule_targets(
                 smart_include.unwrap_or_default(),
                 smart_exclude.unwrap_or_default(),
                 chain_id,
+                pool_id,
             )
         })
         .map_err(|e| e.to_string())?;
@@ -669,6 +671,7 @@ pub fn create_rule_set(
     smart_include: Option<Vec<String>>,
     smart_exclude: Option<Vec<String>>,
     chain_id: Option<String>,
+    pool_id: Option<String>,
     dns_strategy: Option<RuleSetDnsStrategy>,
 ) -> Result<RuleSet, String> {
     let set = state
@@ -724,6 +727,7 @@ pub fn create_rule_set(
                     smart_include,
                     smart_exclude,
                     chain_id,
+                    pool_id,
                 )
             } else {
                 // Local set: an optional initial whole-set route from the
@@ -737,6 +741,7 @@ pub fn create_rule_set(
                     smart_include,
                     smart_exclude,
                     chain_id,
+                    pool_id,
                 )
             }
         })
@@ -928,6 +933,7 @@ pub async fn import_subscription_rule_providers(
                     Vec::new(),
                     Vec::new(),
                     Vec::new(),
+                    None,
                     None,
                 )?;
                 ids.push(set.id);

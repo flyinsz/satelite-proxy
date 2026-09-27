@@ -299,13 +299,14 @@ export function RulesPage({ embedded = false }: Props) {
   const [newSetKind, setNewSetKind] = useState<"local" | "remote">("local");
   const [newSetUrl, setNewSetUrl] = useState("");
   const [newSetTarget, setNewSetTarget] = useState<
-    "proxy" | "direct" | "block" | "node" | "filter" | "chain"
+    "proxy" | "direct" | "block" | "node" | "filter" | "chain" | "pool"
   >("proxy");
   const [newSetNodeIds, setNewSetNodeIds] = useState<string[]>([]);
   const [newSetNodeQuery, setNewSetNodeQuery] = useState("");
   const [newSetSmartInclude, setNewSetSmartInclude] = useState("");
   const [newSetSmartExclude, setNewSetSmartExclude] = useState("");
   const [newSetChainId, setNewSetChainId] = useState("");
+  const [newSetPoolId, setNewSetPoolId] = useState("");
   const [newSetUpdateInterval, setNewSetUpdateInterval] = useState<
     "disabled" | "1h" | "12h" | "24h"
   >("disabled");
@@ -326,9 +327,9 @@ export function RulesPage({ embedded = false }: Props) {
    *  always shows what's actually in effect. "mixed" is a display-only
    *  sentinel for RuleSetStrategy's per-rule "smart" strategy — it is not a
    *  settable RuleTarget, so it can never be the value the user picked. */
-  const [editSetRouteTarget, setEditSetRouteTarget] = useState<
-    Exclude<RuleTarget, "pool"> | "mixed"
-  >("proxy");
+  const [editSetRouteTarget, setEditSetRouteTarget] = useState<RuleTarget | "mixed">(
+    "proxy",
+  );
   /** Full node selection for the edit modal's 指定 picker: 1 pick = classic
    *  single pin, 2+ = whole-set explicit pool. */
   const [editSetNodeIds, setEditSetNodeIds] = useState<string[]>([]);
@@ -337,6 +338,7 @@ export function RulesPage({ embedded = false }: Props) {
   const [editSetSmartExclude, setEditSetSmartExclude] = useState("");
   const [editSetChainId, setEditSetChainId] = useState("");
   const [editSetChainQuery, setEditSetChainQuery] = useState("");
+  const [editSetPoolId, setEditSetPoolId] = useState("");
   const [editSetBusy, setEditSetBusy] = useState(false);
   /** Row ⋮ menu open for this rule id */
   const [menuRuleId, setMenuRuleId] = useState<string | null>(null);
@@ -959,6 +961,8 @@ export function RulesPage({ embedded = false }: Props) {
       }
       case "chain":
         return editSetChainId === (s.chain_id ?? "");
+      case "pool":
+        return editSetPoolId === (s.pool_id ?? "");
       default:
         return true;
     }
@@ -994,7 +998,7 @@ export function RulesPage({ embedded = false }: Props) {
    *  new-set dialog can preview the default before creation. `null` for
    *  Block, which has no editable DNS policy (always DNS reject). */
   function recommendedDnsStrategy(
-    target: "proxy" | "direct" | "block" | "node" | "filter" | "chain",
+    target: "proxy" | "direct" | "block" | "node" | "filter" | "chain" | "pool",
   ): RuleSetDnsStrategy | null {
     return target === "direct" ? "local" : target === "block" ? null : "remote";
   }
@@ -1315,6 +1319,10 @@ export function RulesPage({ embedded = false }: Props) {
       setError(t("rules.needChain"));
       return;
     }
+    if (newSetTarget === "pool" && !newSetPoolId.trim()) {
+      setError(t("rules.needPool"));
+      return;
+    }
     if (newSetKeywordOverlap.length > 0) {
       setError(
         t("rules.smartKeywordConflict", { k: newSetKeywordOverlap.join("、") }),
@@ -1340,6 +1348,7 @@ export function RulesPage({ embedded = false }: Props) {
         newSetTarget === "filter" ? parseKeywords(newSetSmartInclude) : null,
         newSetTarget === "filter" ? parseKeywords(newSetSmartExclude) : null,
         newSetTarget === "chain" ? newSetChainId : null,
+        newSetTarget === "pool" ? newSetPoolId : null,
         newSetTarget === "block" ? null : newSetDnsStrategy,
       );
       const list = await listRuleSets();
@@ -1488,7 +1497,7 @@ export function RulesPage({ embedded = false }: Props) {
     // "mixed" sentinel. RuleSetStrategy's "filter" is RuleTarget's "smart"
     // (same concept, different literal — see strategyLabel).
     setEditSetRouteTarget(
-      target.strategy === "smart" || target.strategy === "pool"
+      target.strategy === "smart"
         ? "mixed"
         : target.strategy === "filter"
           ? "smart"
@@ -1500,6 +1509,7 @@ export function RulesPage({ embedded = false }: Props) {
     setEditSetSmartExclude((target.smart_exclude ?? []).join(" "));
     setEditSetChainId(target.chain_id ?? "");
     setEditSetChainQuery("");
+    setEditSetPoolId(target.pool_id ?? "");
     void ensureNodesLoaded();
     void ensureChainsLoaded();
     void ensurePoolsLoaded();
@@ -1520,6 +1530,10 @@ export function RulesPage({ embedded = false }: Props) {
     }
     if (editSetRouteTarget === "chain" && !editSetChainId.trim()) {
       setError(t("rules.needChain"));
+      return;
+    }
+    if (editSetRouteTarget === "pool" && !editSetPoolId.trim()) {
+      setError(t("rules.needPool"));
       return;
     }
     const id = editSetTarget.id;
@@ -1554,6 +1568,7 @@ export function RulesPage({ embedded = false }: Props) {
           editSetRouteTarget === "smart" ? parseKeywords(editSetSmartInclude) : null,
           editSetRouteTarget === "smart" ? parseKeywords(editSetSmartExclude) : null,
           editSetRouteTarget === "chain" ? editSetChainId : null,
+          editSetRouteTarget === "pool" ? editSetPoolId : null,
         );
       }
       await Promise.all([
@@ -2849,6 +2864,7 @@ export function RulesPage({ embedded = false }: Props) {
                     { value: "node", label: t("rules.strategyNode") },
                     { value: "filter", label: t("rules.strategyFilter") },
                     { value: "chain", label: t("rules.targetChain") },
+                    { value: "pool", label: t("rules.targetPool") },
                   ]}
                 />
               </label>
@@ -2928,6 +2944,26 @@ export function RulesPage({ embedded = false }: Props) {
                           value: c.id,
                           label: c.name,
                         })),
+                      ]}
+                    />
+                  )}
+                </div>
+              )}
+              {newSetTarget === "pool" && (
+                <div className="field rule-chain-pick">
+                  <span>{t("rules.pickPool")}</span>
+                  {pools.length === 0 ? (
+                    <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                      {t("rules.noPools")}
+                    </p>
+                  ) : (
+                    <SolidSelect
+                      value={newSetPoolId}
+                      onChange={setNewSetPoolId}
+                      aria-label={t("rules.pickPool")}
+                      options={[
+                        { value: "", label: t("rules.needPool") },
+                        ...pools.map((p) => ({ value: p.id, label: p.name })),
                       ]}
                     />
                   )}
@@ -3317,9 +3353,7 @@ export function RulesPage({ embedded = false }: Props) {
                 <GlassSeg
                   value={editSetRouteTarget}
                   ariaLabel={t("rules.batchRouteLabel")}
-                  onChange={(value) =>
-                    setEditSetRouteTarget(value as Exclude<RuleTarget, "pool"> | "mixed")
-                  }
+                  onChange={(value) => setEditSetRouteTarget(value as RuleTarget | "mixed")}
                   options={[
                     { value: "mixed", label: t("rules.strategySmart") },
                     { value: "proxy", label: t("rules.targetProxy") },
@@ -3328,6 +3362,7 @@ export function RulesPage({ embedded = false }: Props) {
                     { value: "node", label: t("rules.strategyNode") },
                     { value: "smart", label: t("rules.strategyFilter") },
                     { value: "chain", label: t("rules.targetChainShort") },
+                    { value: "pool", label: t("rules.targetPool") },
                   ]}
                 />
                 {/* One constant-height line below the picker: set meta when the
@@ -3544,6 +3579,27 @@ export function RulesPage({ embedded = false }: Props) {
                     )}
                   </div>
                 )}
+                {editSetRouteTarget === "pool" && (
+                  <div className="field rule-chain-pick">
+                    <span>{t("rules.pickPool")}</span>
+                    {pools.length === 0 ? (
+                      <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                        {t("rules.noPools")}
+                      </p>
+                    ) : (
+                      <SolidSelect
+                        list
+                        value={editSetPoolId}
+                        onChange={setEditSetPoolId}
+                        aria-label={t("rules.pickPool")}
+                        options={[
+                          { value: "", label: t("rules.needPool") },
+                          ...pools.map((p) => ({ value: p.id, label: p.name })),
+                        ]}
+                      />
+                    )}
+                  </div>
+                )}
               </div>
 
               <footer className="modal-footer">
@@ -3560,6 +3616,7 @@ export function RulesPage({ embedded = false }: Props) {
                     (!!editSetTarget.remote && !editSetUrl.trim()) ||
                     (editSetRouteTarget === "node" && editSetNodeIds.length === 0) ||
                     (editSetRouteTarget === "chain" && !editSetChainId.trim()) ||
+                    (editSetRouteTarget === "pool" && !editSetPoolId.trim()) ||
                     editSetKeywordOverlap.length > 0
                   }
                 >
