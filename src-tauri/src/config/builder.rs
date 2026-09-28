@@ -1332,6 +1332,9 @@ fn build_pool_selectors(
     use crate::domain::PoolStrategy;
     let mut out = Vec::new();
     for pool in pools {
+        if !pool.enabled {
+            continue;
+        }
         let members = pool_member_tags(pool, nodes, tags);
         if members.is_empty() {
             continue;

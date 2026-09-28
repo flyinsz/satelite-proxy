@@ -1,11 +1,23 @@
 use crate::config::{dump_rule_set_files, remove_rule_set_files};
 use crate::domain::{
-    Rule, RuleSet, RuleSetDnsStrategy, RuleSetStrategy, RuleSetSummary, RuleTarget, RuleType,
+    NodePool, Rule, RuleSet, RuleSetDnsStrategy, RuleSetStrategy, RuleSetSummary, RuleTarget,
+    RuleType,
 };
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tauri::{AppHandle, Manager, State};
+
+/// Result of toggling subscription rule-providers or proxy-groups.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToggleProvidersResult {
+    /// Whether the items are now enabled (true) or disabled (false).
+    pub enabled: bool,
+    /// Number of items that exist (imported rule-sets or pools).
+    pub count: usize,
+    /// Number of items that were imported in this action (0 if just toggling).
+    pub imported: usize,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct SaveRuleInput {
@@ -1070,6 +1082,268 @@ pub fn import_subscription_proxy_groups(
         return Err("订阅的 proxy-groups 没有可导入的分组".into());
     }
     Ok(pools)
+}
+
+    /// Toggle subscription rule-providers on/off for a subscription.
+///
+/// If all rule-providers are already imported as rule-sets: toggle their
+/// enabled state. If any are missing: import + download + enable everything.
+/// Returns the resulting state.
+#[tauri::command]
+pub async fn toggle_subscription_rule_providers(
+    app: AppHandle,
+    subscription_id: String,
+) -> Result<ToggleProvidersResult, String> {
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| "app state unavailable".to_string())?;
+
+    // Phase 1: in a blocking scope, check what exists and apply toggle.
+    let (want_enable, existing_ids, missing_providers) = state
+        .with_store_mut(|store| {
+            let sub = store
+                .subscriptions
+                .iter()
+                .find(|s| s.id == subscription_id)
+                .ok_or_else(|| crate::error::AppError::NotFound(subscription_id.clone()))?;
+            let providers = sub.rule_providers.clone();
+            if providers.is_empty() {
+                return Err(crate::error::AppError::Config(
+                    "该订阅没有可导入的规则集".into(),
+                ));
+            }
+
+            let mut matched_ids: Vec<String> = Vec::new();
+            let mut missing: Vec<&crate::domain::ClashRuleProvider> = Vec::new();
+            for p in &providers {
+                if let Some(rs) = store
+                    .rule_sets
+                    .iter()
+                    .find(|s| s.name.eq_ignore_ascii_case(&p.name))
+                {
+                    matched_ids.push(rs.id.clone());
+                } else {
+                    missing.push(p);
+                }
+            }
+
+            let all_exist = matched_ids.len() == providers.len();
+            let all_enabled = matched_ids.is_empty()
+                || matched_ids.iter().all(|id| {
+                    store
+                        .rule_sets
+                        .iter()
+                        .find(|s| &s.id == id)
+                        .map(|s| s.enabled)
+                        .unwrap_or(false)
+                });
+
+            // Decision: if all exist and all enabled → disable.
+            // Otherwise → enable (and import missing).
+            let want_enable = !(all_exist && all_enabled);
+
+            // Apply toggle immediately to existing rule-sets.
+            for id in &matched_ids {
+                if let Some(s) = store.rule_sets.iter_mut().find(|s| &s.id == id) {
+                    s.enabled = want_enable;
+                }
+            }
+
+            let ids = matched_ids.clone();
+            let miss: Vec<crate::domain::ClashRuleProvider> =
+                missing.iter().map(|p| (*p).clone()).collect();
+            Ok((want_enable, ids, miss))
+        })
+        .map_err(|e| e.to_string())?;
+
+    let existing_count = existing_ids.len();
+    let mut imported = 0usize;
+
+    // Phase 2: import missing providers (create + download + enable).
+    if !missing_providers.is_empty() {
+        let new_ids = state
+            .with_store_mut(|store| {
+                let mut ids = Vec::new();
+                for p in &missing_providers {
+                    if store
+                        .rule_sets
+                        .iter()
+                        .any(|s| s.name.eq_ignore_ascii_case(&p.name))
+                    {
+                        continue;
+                    }
+                    let target = clash_target_to_rule_target(&p.suggested_target);
+                    let interval = clash_interval_to_update_interval(p.interval);
+                    let set = store.create_remote_rule_set(
+                        &p.name, &p.url, target, interval,
+                        None, Vec::new(), Vec::new(), Vec::new(), None, None,
+                    )?;
+                    ids.push(set.id);
+                }
+                Ok(ids)
+            })
+            .map_err(|e| e.to_string())?;
+
+        // Download all new rule-sets concurrently.
+        let mut join = tokio::task::JoinSet::new();
+        for id in &new_ids {
+            let app = app.clone();
+            let id = id.clone();
+            join.spawn(async move {
+                (id.clone(), crate::remote_rule_auto::refresh_download(app, id).await)
+            });
+        }
+        let mut cleanup: Vec<std::path::PathBuf> = Vec::new();
+        while let Some(res) = join.join_next().await {
+            match res {
+                Ok((_id, Ok(downloaded))) => {
+                    imported += 1;
+                    cleanup.extend(downloaded.cleanup_after_apply);
+                }
+                _ => {}
+            }
+        }
+
+        // Enable the newly imported ones if they have cache files.
+        state
+            .with_store_mut(|store| {
+                for id in &new_ids {
+                    if let Some(set) = store.rule_sets.iter_mut().find(|s| &s.id == id) {
+                        let ready = set
+                            .remote
+                            .as_ref()
+                            .and_then(|r| r.local_path.as_ref())
+                            .is_some();
+                        if ready {
+                            set.enabled = want_enable;
+                        }
+                    }
+                }
+                Ok(())
+            })
+            .map_err(|e| e.to_string())?;
+
+        crate::rule_apply::request_restart(app, cleanup);
+    }
+
+    let total = existing_count + imported;
+    Ok(ToggleProvidersResult {
+        enabled: want_enable,
+        count: total,
+        imported,
+    })
+}
+
+/// Toggle subscription proxy-groups on/off for a subscription.
+///
+/// If all proxy-groups are already imported as node pools: toggle their
+/// enabled state. If any are missing: import them (create pools).
+/// Returns the resulting state.
+#[tauri::command]
+pub fn toggle_subscription_proxy_groups(
+    app: AppHandle,
+    subscription_id: String,
+) -> Result<ToggleProvidersResult, String> {
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| "app state unavailable".to_string())?;
+
+    let result = state
+        .with_store_mut(|store| {
+            let sub = store
+                .subscriptions
+                .iter()
+                .find(|s| s.id == subscription_id)
+                .ok_or_else(|| crate::error::AppError::NotFound(subscription_id.clone()))?;
+            let groups = sub.proxy_groups.clone();
+            if groups.is_empty() {
+                return Err(crate::error::AppError::Config(
+                    "该订阅没有可导入的 proxy-groups".into(),
+                ));
+            }
+
+            let mut matched_pools: Vec<String> = Vec::new();
+            let mut missing_groups: Vec<&crate::domain::ClashProxyGroup> = Vec::new();
+            for g in &groups {
+                if store.pools.iter().any(|p| p.name.eq_ignore_ascii_case(&g.name)) {
+                    matched_pools.push(g.name.clone());
+                } else {
+                    missing_groups.push(g);
+                }
+            }
+
+            let all_exist = matched_pools.len() == groups.len();
+            let all_enabled = matched_pools.is_empty()
+                || matched_pools.iter().all(|name| {
+                    store
+                        .pools
+                        .iter()
+                        .find(|p| p.name.eq_ignore_ascii_case(name))
+                        .map(|p| p.enabled)
+                        .unwrap_or(false)
+                });
+
+            // Decision: if all exist and all enabled → disable.
+            // Otherwise → enable (and import missing).
+            let want_enable = !(all_exist && all_enabled);
+
+            // Apply toggle immediately to existing pools.
+            for name in &matched_pools {
+                if let Some(p) = store.pools.iter_mut().find(|p| p.name.eq_ignore_ascii_case(name)) {
+                    p.enabled = want_enable;
+                }
+            }
+
+            // Import missing groups as pools.
+            let mut imported = 0usize;
+            let node_ids: std::collections::HashMap<String, String> = store
+                .nodes
+                .iter()
+                .filter(|n| n.subscription_id == subscription_id)
+                .map(|n| (n.node.name.clone(), n.node.id.clone()))
+                .collect();
+
+            for g in &missing_groups {
+                if !crate::domain::ClashProxyGroup::supported_kind(&g.kind) {
+                    continue;
+                }
+                if store.pools.iter().any(|p| p.name.eq_ignore_ascii_case(&g.name)) {
+                    continue;
+                }
+                let resolved: Vec<String> = g
+                    .members
+                    .iter()
+                    .filter_map(|m| node_ids.get(m))
+                    .cloned()
+                    .collect();
+                if resolved.is_empty() {
+                    continue;
+                }
+                let pool = store.create_pool(
+                    &g.name,
+                    crate::domain::PoolMode::Explicit { node_ids: resolved },
+                )?;
+                if let Some(p) = store.pools.iter_mut().find(|p| p.id == pool.id) {
+                    p.strategy = crate::domain::PoolStrategy::from_clash_kind(&g.kind);
+                    p.probe_url = g.url.clone();
+                    p.interval = g.interval.and_then(|secs| u32::try_from(secs).ok());
+                    p.tolerance = g.tolerance;
+                    p.enabled = want_enable;
+                }
+                imported += 1;
+            }
+
+            Ok(ToggleProvidersResult {
+                enabled: want_enable,
+                count: matched_pools.len() + imported,
+                imported,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    // Trigger a kernel restart so the config picks up the new pool enabled states.
+    crate::rule_apply::request_restart(app, Vec::new());
+    Ok(result)
 }
 
 #[tauri::command(async)]

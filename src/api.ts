@@ -78,6 +78,23 @@ export function importSubscriptionProxyGroups(subscriptionId: string) {
   });
 }
 
+/** Toggle rule-providers for one subscription: enable if disabled/not-imported,
+ *  disable if all enabled and already imported. */
+export function toggleSubscriptionRuleProviders(subscriptionId: string) {
+  return invoke<import("./types").ToggleProvidersResult>(
+    "toggle_subscription_rule_providers",
+    { subscriptionId },
+  );
+}
+
+/** Toggle proxy-groups for one subscription: enable (import if needed) / disable. */
+export function toggleSubscriptionProxyGroups(subscriptionId: string) {
+  return invoke<import("./types").ToggleProvidersResult>(
+    "toggle_subscription_proxy_groups",
+    { subscriptionId },
+  );
+}
+
 export function getSubscription(id: string) {
   return invoke<SubscriptionDetail>("get_subscription", { id });
 }

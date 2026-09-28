@@ -16,8 +16,8 @@ import {
   deleteRuleSet,
   getRuleSet,
   getSettings,
-  importSubscriptionRuleProviders,
-  importSubscriptionProxyGroups,
+  toggleSubscriptionRuleProviders,
+  toggleSubscriptionProxyGroups,
   listAllNodes,
   listChains,
   listPools,
@@ -292,6 +292,38 @@ export function RulesPage({ embedded = false }: Props) {
   const [proxyOpen, setProxyOpen] = useState(false);
   const [proxyGroups, setProxyGroups] = useState<SubscriptionProxyGroups[]>([]);
   const [proxyBusyIds, setProxyBusyIds] = useState<Set<string>>(new Set());
+
+  /** Compute whether a subscription's rule-providers are all imported and enabled. */
+  const ruleProviderStatus = useCallback(
+    (sub: SubscriptionRuleProviders): "none" | "enabled" | "disabled" => {
+      const allExist = sub.providers.every((p) =>
+        sets.some((s) => s.name.toLowerCase() === p.name.toLowerCase()),
+      );
+      if (!allExist) return "none";
+      const allEnabled = sub.providers.every((p) => {
+        const s = sets.find((x) => x.name.toLowerCase() === p.name.toLowerCase());
+        return s ? s.enabled : false;
+      });
+      return allEnabled ? "enabled" : "disabled";
+    },
+    [sets],
+  );
+
+  /** Compute whether a subscription's proxy-groups are all imported and enabled. */
+  const proxyGroupStatus = useCallback(
+    (sub: SubscriptionProxyGroups): "none" | "enabled" | "disabled" => {
+      const allExist = sub.groups.every((g) =>
+        pools.some((p) => p.name.toLowerCase() === g.name.toLowerCase()),
+      );
+      if (!allExist) return "none";
+      const allEnabled = sub.groups.every((g) => {
+        const p = pools.find((x) => x.name.toLowerCase() === g.name.toLowerCase());
+        return p ? p.enabled : false;
+      });
+      return allEnabled ? "enabled" : "disabled";
+    },
+    [pools],
+  );
 
   /** New rule-set modal (window.prompt is unreliable in Tauri WebView). */
   const [newSetOpen, setNewSetOpen] = useState(false);
@@ -1377,22 +1409,16 @@ export function RulesPage({ embedded = false }: Props) {
     }
   }
 
-  async function importSubscription(sub: SubscriptionRuleProviders) {
+  async function toggleSubscription(sub: SubscriptionRuleProviders) {
     setImportBusyIds((current) => new Set(current).add(sub.subscription_id));
     setError(null);
     try {
-      const summary = await importSubscriptionRuleProviders(sub.subscription_id);
+      const result = await toggleSubscriptionRuleProviders(sub.subscription_id);
       await reloadSets();
-      setImportGroups((current) =>
-        current.filter((x) => x.subscription_id !== sub.subscription_id),
-      );
-      if (summary.failed.length > 0) {
-        setError(
-          t("rules.importFailed", {
-            n: summary.failed.length,
-            detail: summary.failed.join("、"),
-          }),
-        );
+      // Keep the entry visible; the button will reflect the new state
+      // via ruleProviderStatus() on re-render.
+      if (result.count > 0 && result.enabled) {
+        void ensurePoolsLoaded();
       }
     } catch (err) {
       setError(typeof err === "string" ? err : String(err));
@@ -1418,19 +1444,15 @@ export function RulesPage({ embedded = false }: Props) {
     }
   }
 
-  async function importProxyGroup(sub: SubscriptionProxyGroups) {
+  async function toggleProxyGroup(sub: SubscriptionProxyGroups) {
     setProxyBusyIds((current) => new Set(current).add(sub.subscription_id));
     setError(null);
     try {
-      const pools = await importSubscriptionProxyGroups(sub.subscription_id);
+      const result = await toggleSubscriptionProxyGroups(sub.subscription_id);
       await reloadSets();
-      setProxyGroups((current) =>
-        current.filter((x) => x.subscription_id !== sub.subscription_id),
-      );
-      if (pools.length > 0) {
-        // Pools landed on the chain page — keep the local picker lean; a
-        // missed pool count is fine (names skipped as duplicates aren't
-        // surfaced, matching the rule-provider import flow).
+      await ensurePoolsLoaded();
+      if (result.count > 0 && result.enabled) {
+        // Pools landed on the chain page — keep the local picker lean.
         void ensurePoolsLoaded();
       }
     } catch (err) {
@@ -3157,9 +3179,13 @@ export function RulesPage({ embedded = false }: Props) {
                       <GlassButton
                         variant="primary"
                         disabled={busy}
-                        onClick={() => void importSubscription(sub)}
+                        onClick={() => void toggleSubscription(sub)}
                       >
-                        {busy ? t("rules.importBusy") : t("rules.importAction")}
+                        {busy
+                          ? t("rules.importBusy")
+                          : ruleProviderStatus(sub) === "enabled"
+                            ? t("rules.importDisable")
+                            : t("rules.importEnable")}
                       </GlassButton>
                     </div>
                   );
@@ -3239,11 +3265,13 @@ export function RulesPage({ embedded = false }: Props) {
                       <GlassButton
                         variant="primary"
                         disabled={busy}
-                        onClick={() => void importProxyGroup(sub)}
+                        onClick={() => void toggleProxyGroup(sub)}
                       >
                         {busy
                           ? t("rules.importGroupsBusy")
-                          : t("rules.importGroupsAction")}
+                          : proxyGroupStatus(sub) === "enabled"
+                            ? t("rules.importDisable")
+                            : t("rules.importEnable")}
                       </GlassButton>
                     </div>
                   );

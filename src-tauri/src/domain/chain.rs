@@ -62,6 +62,13 @@ pub struct NodePool {
     /// Latency tolerance in ms for `url-test` (kernel default when absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tolerance: Option<u32>,
+    /// Whether this pool is enabled (included in outbound generation).
+    #[serde(default = "default_pool_enabled")]
+    pub enabled: bool,
+}
+
+fn default_pool_enabled() -> bool {
+    true
 }
 
 impl NodePool {
@@ -75,6 +82,7 @@ impl NodePool {
             probe_url: None,
             interval: None,
             tolerance: None,
+            enabled: true,
         }
     }
 

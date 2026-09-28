@@ -238,6 +238,13 @@ export interface ImportRuleProvidersSummary {
   failed: string[];
 }
 
+/** Result of toggling subscription rule-providers or proxy-groups. */
+export interface ToggleProvidersResult {
+  enabled: boolean;
+  count: number;
+  imported: number;
+}
+
 export interface SubscriptionUrlEntry {
   id: string;
   url: string;
@@ -975,6 +982,8 @@ export interface NodePool {
   id: string;
   name: string;
   mode: PoolMode;
+  strategy?: string;
+  enabled?: boolean;
 }
 
 /** One hop in a [[ProxyChain]] — either a single pinned node or a pool
