@@ -463,6 +463,15 @@ function PoolRow({
           {t("chain.usedByChains", { n: usedByChains })}
         </span>
       )}
+      <button
+        type="button"
+        className="icon-btn chain-pool-delete"
+        onClick={onDelete}
+        title={t("common.delete")}
+        aria-label={t("common.delete")}
+      >
+        ×
+      </button>
       <RowMenu
         id={`pool-${pool.id}`}
         openId={openMenuId}

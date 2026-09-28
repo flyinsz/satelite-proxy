@@ -9366,6 +9366,17 @@ li.virt-pad {
   background: var(--hover-wash);
 }
 
+/* Direct delete affordance beside the ⋮ menu (the menu stays as fallback). */
+.chain-pool-delete {
+  flex: 0 0 auto;
+  color: var(--muted);
+  padding: 0.1rem 0.35rem;
+}
+.chain-pool-delete:hover {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
 .chain-pool-row .chain-pool-name {
   flex: 0 1 auto;
   min-width: 3rem;

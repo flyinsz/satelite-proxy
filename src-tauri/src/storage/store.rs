@@ -103,8 +103,10 @@ fn region_pool_name(region: &Region) -> String {
     format!("{} {}节点", region.flag, region.zh)
 }
 
-/// The catch-all region pool name for nodes matching no region.
-const OTHER_REGION_POOL_NAME: &str = "其他节点";
+/// The catch-all region pool name for nodes matching no region. Deliberately
+/// distinct from any airport-provided group name (some subscriptions ship a
+/// group literally called "其他节点") so the two never collide.
+const OTHER_REGION_POOL_NAME: &str = "🌐 其他地区";
 
 /// Mirror `detectRegion` from `src/nodeGroups.ts`: flag emoji → Chinese
 /// substring → English word → ISO token, best tier wins.
@@ -1860,36 +1862,6 @@ impl AppStore {
         Ok(pool)
     }
 
-    /// Seed the built-in region node pools once (idempotent, matched by name).
-    ///
-    /// These are keyword pools — members resolve against the live node list on
-    /// every config build, so they survive subscription refreshes. Returns the
-    /// number of pools created (0 on a second run).
-    pub fn seed_builtin_node_pools(&mut self) -> usize {
-        let specs: &[(&str, &[&str], &[&str])] = &[
-            ("香港节点", &["香港", "HK"], &[]),
-            ("新加坡节点", &["新加坡", "SG"], &[]),
-            ("美国节点", &["美国", "US"], &[]),
-            ("其他节点", &[], &["香港", "HK", "新加坡", "SG", "美国", "US"]),
-        ];
-        let mut created = 0;
-        for (name, include, exclude) in specs {
-            if self.pools.iter().any(|p| p.name == *name) {
-                continue;
-            }
-            let pool = crate::domain::NodePool::new(
-                name,
-                crate::domain::PoolMode::Keyword {
-                    include: include.iter().map(|s| s.to_string()).collect(),
-                    exclude: exclude.iter().map(|s| s.to_string()).collect(),
-                },
-            );
-            self.pools.push(pool);
-            created += 1;
-        }
-        created
-    }
-
     /// Sync region node pools against the current live node list.
     ///
     /// Every region in [`REGIONS`] with at least one live node gets a keyword
@@ -2693,7 +2665,7 @@ mod tests {
             "DE pool should exist: {names:?}"
         );
         assert!(
-            names.iter().any(|n| *n == "其他节点"),
+            names.iter().any(|n| *n == OTHER_REGION_POOL_NAME),
             "catch-all should exist: {names:?}"
         );
 
@@ -2710,7 +2682,7 @@ mod tests {
             "HK pool should be dropped: {names:?}"
         );
         assert!(
-            !names.iter().any(|n| *n == "其他节点"),
+            !names.iter().any(|n| *n == OTHER_REGION_POOL_NAME),
             "catch-all should be dropped: {names:?}"
         );
         assert!(
