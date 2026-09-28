@@ -3176,17 +3176,12 @@ export function RulesPage({ embedded = false }: Props) {
                           {t("rules.importCount", { n: sub.providers.length })}
                         </div>
                       </div>
-                      <GlassButton
-                        variant="primary"
+                      <GlassSwitchControl
+                        checked={ruleProviderStatus(sub) === "enabled"}
+                        size="sm"
                         disabled={busy}
-                        onClick={() => void toggleSubscription(sub)}
-                      >
-                        {busy
-                          ? t("rules.importBusy")
-                          : ruleProviderStatus(sub) === "enabled"
-                            ? t("rules.importDisable")
-                            : t("rules.importEnable")}
-                      </GlassButton>
+                        onChange={() => void toggleSubscription(sub)}
+                      />
                     </div>
                   );
                 })
@@ -3262,17 +3257,12 @@ export function RulesPage({ embedded = false }: Props) {
                           {t("rules.importGroupsCount", { n: sub.groups.length })}
                         </div>
                       </div>
-                      <GlassButton
-                        variant="primary"
+                      <GlassSwitchControl
+                        checked={proxyGroupStatus(sub) === "enabled"}
+                        size="sm"
                         disabled={busy}
-                        onClick={() => void toggleProxyGroup(sub)}
-                      >
-                        {busy
-                          ? t("rules.importGroupsBusy")
-                          : proxyGroupStatus(sub) === "enabled"
-                            ? t("rules.importDisable")
-                            : t("rules.importEnable")}
-                      </GlassButton>
+                        onChange={() => void toggleProxyGroup(sub)}
+                      />
                     </div>
                   );
                 })
