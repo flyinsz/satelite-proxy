@@ -1203,75 +1203,80 @@ export function NodesPage() {
         pools.length === 0 ? (
           <div className="empty card muted">{t("nodes.poolsEmpty")}</div>
         ) : (
-          <div className="card">
-            {pools.map((p) => {
-            const expanded = poolExpanded.has(p.id);
-            const members = poolMembers(p);
-            const memberCount = p.mode.mode === "explicit"
-              ? p.mode.node_ids.length
-              : members.length;
-            return (
-              <div key={p.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                <div
-                  className="node-list-group-row"
-                  style={{ height: 30, cursor: "pointer", display: "flex", alignItems: "center", gap: "0.5rem" }}
-                  onClick={() => togglePoolExpand(p.id)}
-                >
-                  <span className="node-group-caret" style={{ marginLeft: 8 }}>{expanded ? "▼" : "▶"}</span>
-                  <span style={{ fontWeight: 500, flex: "0 0 auto" }}>{p.name}</span>
-                  <span className="muted" style={{ fontSize: 12, flex: "0 0 auto" }}>
-                    {p.strategy === "select" ? t("chain.strategySelect")
-                      : p.strategy === "url_test" ? t("chain.strategyUrlTest")
-                      : p.strategy === "fallback" ? t("chain.strategyFallback")
-                      : p.strategy === "load_balance" ? t("chain.strategyLoadBalance")
-                      : p.strategy ?? "—"}
-                  </span>
-                  <span className={`pill ${p.mode.mode === "explicit" ? "target-node" : "target-smart"}`} style={{ flex: "0 0 auto" }}>
-                    {p.mode.mode === "explicit" ? t("chain.poolModeExplicit") : t("chain.poolModeKeyword")}
-                  </span>
-                  <span className="muted mono" style={{ fontSize: 12, flex: "0 0 auto" }}>{memberCount} {t("chain.poolMembersSuffix")}</span>
-                  <span style={{ flex: 1 }} />
-                  <RowMenu
-                    id={`pool-${p.id}`}
-                    openId={openMenuId}
-                    setOpenId={setOpenMenuId}
-                    flipUp={false}
-                    items={[
-                      { key: "edit", label: t("common.edit"), onClick: () => setPoolEditor({ pool: p }) },
-                    ]}
-                  />
-                </div>
-                {expanded && (
-                  <div style={{ borderTop: "1px solid var(--border)", padding: "4px 0" }}>
-                    {members.length === 0 ? (
-                      <div className="muted" style={{ padding: 8, fontSize: 12 }}>{t("chain.noPoolMembers")}</div>
-                    ) : (
-                      <>
-                        <div className="node-list-head" style={{ gridTemplateColumns: NODE_LIST_COLS, padding: "0 12px" }}>
-                          <span></span>
-                          <span>{t("nodes.sortName")}</span>
-                          <span>proto</span>
-                          <span>host</span>
-                          <span>port</span>
-                          <span>{t("nodes.sortLatency")}</span>
+          <div className="card table-wrap">
+            <div className="node-list">
+              <div className="node-list-head" style={{ gridTemplateColumns: NODE_LIST_COLS }}>
+                <span></span>
+                <span>{t("nodes.sortName")}</span>
+                <span>proto</span>
+                <span>host</span>
+                <span>port</span>
+                <span>{t("nodes.sortLatency")}</span>
+              </div>
+              {pools.map((p) => {
+                const expanded = poolExpanded.has(p.id);
+                const members = poolMembers(p);
+                return (
+                  <div key={p.id}>
+                    <div
+                      className="node-list-group-row"
+                      style={{ height: NODE_GROUP_H }}
+                      onClick={() => togglePoolExpand(p.id)}
+                      title={t("nodes.groupToggleHint")}
+                    >
+                      <span className={`node-group-caret${expanded ? "" : " closed"}`} />
+                      <span className="node-group-label">{p.name}</span>
+                      <span className="muted" style={{ fontSize: 12 }}>
+                        {p.strategy === "select" ? t("chain.strategySelect")
+                          : p.strategy === "url_test" ? t("chain.strategyUrlTest")
+                          : p.strategy === "fallback" ? t("chain.strategyFallback")
+                          : p.strategy === "load_balance" ? t("chain.strategyLoadBalance")
+                          : p.strategy ?? "—"}
+                      </span>
+                      <span className={`pill ${p.mode.mode === "explicit" ? "target-node" : "target-smart"}`}>
+                        {p.mode.mode === "explicit" ? t("chain.poolModeExplicit") : t("chain.poolModeKeyword")}
+                      </span>
+                      <span className="node-group-count mono">
+                        {p.mode.mode === "explicit" ? p.mode.node_ids.length : members.length}
+                      </span>
+                      <span style={{ flex: 1 }} />
+                      <RowMenu
+                        id={`pool-${p.id}`}
+                        openId={openMenuId}
+                        setOpenId={setOpenMenuId}
+                        flipUp={false}
+                        items={[
+                          { key: "edit", label: t("common.edit"), onClick: () => setPoolEditor({ pool: p }) },
+                        ]}
+                      />
+                    </div>
+                    {expanded &&
+                      (members.length === 0 ? (
+                        <div className="muted" style={{ padding: "0.5rem 0.75rem", fontSize: 12 }}>
+                          {t("chain.noPoolMembers")}
                         </div>
-                        {members.map((n) => (
-                          <div key={n.id} className="node-list-row" style={{ gridTemplateColumns: NODE_LIST_COLS, padding: "4px 12px", fontSize: 13 }}>
+                      ) : (
+                        members.map((n) => (
+                          <div
+                            key={n.id}
+                            className="node-list-row"
+                            style={{ gridTemplateColumns: NODE_LIST_COLS }}
+                          >
                             <span></span>
                             <span>{n.name}</span>
-                            <span>{n.protocol ?? "—"}</span>
-                            <span>{n.server ?? "—"}</span>
-                            <span>{n.port ?? "—"}</span>
-                            <span>{n.latency_ms != null ? `${n.latency_ms}ms` : "—"}</span>
+                            <span>{n.protocol}</span>
+                            <span>{n.server}</span>
+                            <span>{n.port}</span>
+                            <span>
+                              {n.latency_ms != null ? `${n.latency_ms}ms` : "—"}
+                            </span>
                           </div>
-                        ))}
-                      </>
-                    )}
+                        ))
+                      ))}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
           </div>
         )
       ) : loading ? (

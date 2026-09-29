@@ -504,7 +504,7 @@ export function PoolEditorModal({
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [strategy, setStrategy] = useState(pool?.strategy ?? "url-test");
+  const [strategy, setStrategy] = useState(pool?.strategy ?? "url_test");
   const [defaultNode, setDefaultNode] = useState<string | null>(null);
 
   // Stale node IDs: stored IDs that no longer match any current node.
@@ -595,7 +595,7 @@ export function PoolEditorModal({
           strategy,
           null,  // probe_url
           strategy === "url_test" || strategy === "fallback" || strategy === "load_balance" ? 300 : null,  // interval
-          strategy === "url-test" || strategy === "fallback" || strategy === "load-balance" ? 50 : null,  // tolerance
+          strategy === "url_test" || strategy === "fallback" || strategy === "load_balance" ? 50 : null,  // tolerance
         );
       } else {
         await createPool(trimmed, poolMode);

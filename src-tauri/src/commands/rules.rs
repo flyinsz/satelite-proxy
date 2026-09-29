@@ -1046,11 +1046,12 @@ pub fn import_subscription_proxy_groups(
                 if !crate::domain::ClashProxyGroup::supported_kind(&g.kind) {
                     continue;
                 }
-                if store
-                    .pools
-                    .iter()
-                    .any(|p| p.name.eq_ignore_ascii_case(&g.name))
-                {
+                // Existing pool → sync strategy/probe settings instead of skipping.
+                if let Some(pool) = store.pools.iter_mut().find(|p| p.name.eq_ignore_ascii_case(&g.name)) {
+                    pool.strategy = crate::domain::PoolStrategy::from_clash_kind(&g.kind);
+                    pool.probe_url = g.url.clone();
+                    pool.interval = g.interval.and_then(|secs| u32::try_from(secs).ok());
+                    pool.tolerance = g.tolerance;
                     continue;
                 }
                 let mut resolved = Vec::new();
@@ -1269,6 +1270,24 @@ pub fn toggle_subscription_proxy_groups(
                     matched_pools.push(g.name.clone());
                 } else {
                     missing_groups.push(g);
+                }
+            }
+
+            // Sync strategy/probe settings onto existing pools — older versions
+            // approximated fallback/load-balance as url-test, so a re-toggle must
+            // refresh them to the subscription's actual group kind.
+            for g in &groups {
+                if let Some(p) = store
+                    .pools
+                    .iter_mut()
+                    .find(|p| p.name.eq_ignore_ascii_case(&g.name))
+                {
+                    if crate::domain::ClashProxyGroup::supported_kind(&g.kind) {
+                        p.strategy = crate::domain::PoolStrategy::from_clash_kind(&g.kind);
+                        p.probe_url = g.url.clone();
+                        p.interval = g.interval.and_then(|secs| u32::try_from(secs).ok());
+                        p.tolerance = g.tolerance;
+                    }
                 }
             }
 

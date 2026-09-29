@@ -591,6 +591,28 @@ pub(crate) fn heal_rule_providers(
             }
         }
     }
+    // Sync existing pools' strategy/probe settings to every subscription's
+    // actual group kinds — older versions approximated fallback/load-balance
+    // as url-test, so stored pools may show the wrong strategy until a
+    // manual re-import. Runs for ALL subs (even ones whose provider lists
+    // were already populated) so a re-heal fixes pools without re-importing.
+    for sub in store.subscriptions.iter() {
+        for group in sub.proxy_groups.iter() {
+            if !crate::domain::ClashProxyGroup::supported_kind(&group.kind) {
+                continue;
+            }
+            if let Some(pool) = store
+                .pools
+                .iter_mut()
+                .find(|p| p.name.eq_ignore_ascii_case(&group.name))
+            {
+                pool.strategy = crate::domain::PoolStrategy::from_clash_kind(&group.kind);
+                pool.probe_url = group.url.clone();
+                pool.interval = group.interval.and_then(|secs| u32::try_from(secs).ok());
+                pool.tolerance = group.tolerance;
+            }
+        }
+    }
 }
 
 /// Decompile and validate a binary `.srs` with the active sing-box core.
