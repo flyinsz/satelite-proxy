@@ -14,9 +14,6 @@ import {
   testCustomNodesLatency,
   testNodesLatency,
   toggleFavoriteNode,
-  selectPool,
-  deletePool,
-  getPoolActiveNode,
 } from "../api";
 import { GlassButton } from "../components/GlassButton";
 import { GlassSwitch } from "../components/GlassSwitch";
@@ -27,23 +24,18 @@ import { useI18n } from "../i18n";
 import { nodeFeatureBadges, nodeTip } from "../nodeTooltip";
 import { groupNodes, type GroupBy } from "../nodeGroups";
 import { GlassSeg } from "../components/GlassSeg";
-import { PoolEditorModal, RowMenu } from "./ChainPage";
+import { PoolsView } from "./PoolsView";
 import { waitForCoreRestart } from "../coreBusy";
 import { useVirtualRange } from "../hooks/useVirtualRange";
 import { filterCustomNodes, applyCustomLatency, sortNodes, type CustomLatencyMap } from "../customNodes";
 import { createLatencyResultBuffer } from "../latencyStream";
+import { NODE_GROUP_H, NODE_LIST_COLS } from "../nodeLayout";
 import type { AutoSelectMode, NodePool, ProxyNode, SortMode, ViewMode } from "../types";
 
 const VIRTUALIZE_AFTER = 200;
 const LIST_ROW_HEIGHT = 49;
 const GRID_ROW_HEIGHT = 94;
 
-/** Slim group header band height (px). */
-const NODE_GROUP_H = 30;
-/** List view column template — shared by the head row and every data row so
- *  they align without relying on native <table> auto-layout (dropped so the
- *  group header row can span full width and grow past a single line). */
-const NODE_LIST_COLS = "40px minmax(0,1.44fr) 90px minmax(0,1fr) 70px 90px";
 /** .node-grid-virtual row gap (10px, tighter than the resting 0.65rem) —
  *  a spanning header row is followed by the gap before the next card row,
  *  so its pitch includes it. */
@@ -162,54 +154,13 @@ export function NodesPage() {
   // runtime nodes are parsed on demand from a raw config body.
   const [editNode, setEditNode] = useState<ProxyNode | null>(null);
 
+  // Node pools — the pools list feeds both the "节点池" grouping and the fold
+  // (collapse/expand) buttons, so it stays owned by the page; the per-pool
+  // view state lives in PoolsView.
   const [pools, setPools] = useState<NodePool[]>([]);
-  const [poolEditor, setPoolEditor] = useState<{ pool: NodePool } | null>(null);
+  // Expanded pool drawers — driven by the toolbar's ⊖/⊕ buttons as well as
+  // by clicking a pool header, hence page-owned.
   const [poolExpanded, setPoolExpanded] = useState<Set<string>>(new Set());
-  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-  // poolId → currently-effective node id inside that pool (its group `now`).
-  const [poolActiveNode, setPoolActiveNode] = useState<Record<string, string | null>>({});
-  // poolId set — a latency test for that pool's members is in flight.
-  const [poolTestIds, setPoolTestIds] = useState<Set<string>>(new Set());
-
-  const togglePoolExpand = useCallback((id: string) => {
-    setPoolExpanded((cur) => {
-      const next = new Set(cur);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-        // On expand, resolve the CURRENT pool's effective node so it can be
-        // highlighted inside the member list. Only the pool actually in use
-        // (current_node_id) gets a live "now" highlight — other pools just
-        // show their members without a forced selection marker.
-        if (id === currentId) {
-          getPoolActiveNode(id)
-            .then((nodeId) => setPoolActiveNode((prev) => ({ ...prev, [id]: nodeId })))
-            .catch(() => setPoolActiveNode((prev) => ({ ...prev, [id]: null })));
-        }
-      }
-      return next;
-    });
-  }, [currentId]);
-
-  // Resolve pool member nodes for the drawer view.
-  const poolMembers = useCallback(
-    (pool: NodePool): ProxyNode[] => {
-      if (pool.mode.mode === "explicit") {
-        const ids = pool.mode.node_ids;
-        return nodes.filter((n) => ids.includes(n.id));
-      }
-      // keyword mode
-      const { include, exclude } = pool.mode;
-      return nodes.filter((n) => {
-        const name = n.name.toLowerCase();
-        const inc = include.length === 0 || include.some((k) => name.includes(k.toLowerCase()));
-        const exc = exclude.length > 0 && exclude.some((k) => name.includes(k.toLowerCase()));
-        return inc && !exc;
-      });
-    },
-    [nodes],
-  );
 
   const [customRuntime, setCustomRuntime] = useState(false);
   // Xray has no Clash-style delay API — the "real latency" button would
@@ -419,14 +370,16 @@ export function NodesPage() {
   }
   function collapseAll() {
     if (groupBy === "pools") {
-      setPoolExpanded(new Set(pools.map((p) => p.id)));
+      // poolExpanded holds the EXPANDED ids (opposite polarity to
+      // collapsedGroups below), so collapsing clears it and expanding fills it.
+      setPoolExpanded(new Set());
       return;
     }
     setCollapsedGroups(new Set(groups.map((g) => g.key)));
   }
   function expandAll() {
     if (groupBy === "pools") {
-      setPoolExpanded(new Set());
+      setPoolExpanded(new Set(pools.map((p) => p.id)));
       return;
     }
     setCollapsedGroups(new Set());
@@ -569,8 +522,6 @@ export function NodesPage() {
       await setCurrentNode(id);
       setCurrentId(id);
       setAutoSelect("off");
-      // Picking a plain node clears any pool "now" highlight.
-      setPoolActiveNode({});
       // Running: Clash API hot-switch — UI selection is enough feedback.
       // Stopped: write active.json so next start uses the new node.
       const status = await getProxyStatus().catch(() => null);
@@ -587,86 +538,6 @@ export function NodesPage() {
     } finally {
       setSwitching(false);
       setBusyId(null);
-    }
-  }
-
-  /** Select a pool as the current manual egress (pool's selector outbound). */
-  async function onUsePool(poolId: string) {
-    if (busyId || switching) return;
-    setBusyId(poolId);
-    setError(null);
-    try {
-      const leavingKernel = autoSelect === "kernel";
-      await selectPool(poolId);
-      setCurrentId(poolId);
-      setAutoSelect("off");
-      const status = await getProxyStatus().catch(() => null);
-      if (!status?.running) {
-        await generateSingboxConfig();
-      } else if (leavingKernel) {
-        setSwitching(true);
-        await waitForCoreRestart();
-      }
-      // Refresh this pool's effective node highlight after switching.
-      const activeNodeId = await getPoolActiveNode(poolId).catch(() => null);
-      // Only the newly-selected pool keeps a live highlight.
-      setPoolActiveNode({ [poolId]: activeNodeId });
-    } catch (e) {
-      setError(typeof e === "string" ? e : String(e));
-    } finally {
-      setSwitching(false);
-      setBusyId(null);
-    }
-  }
-
-  /** Latency-test every member of one pool (streaming, same path as the
-   *  toolbar test button). Results land back in the node list, so the pool
-   *  row's min-latency badge updates automatically. */
-  async function onTestPool(poolId: string) {
-    if (poolTestIds.has(poolId) || testing) return;
-    const pool = pools.find((p) => p.id === poolId);
-    if (!pool) return;
-    const members = poolMembers(pool);
-    if (members.length === 0) return;
-    setPoolTestIds((prev) => new Set(prev).add(poolId));
-    setError(null);
-    const ids = members.map((n) => n.id);
-    const idSet = new Set(ids);
-    setNodes((prev) =>
-      prev.map((n) =>
-        idSet.has(n.id) ? { ...n, latency_ms: undefined, latency_at: undefined } : n,
-      ),
-    );
-    try {
-      const batch = await testNodesLatency(ids, 3000, () => {});
-      // Direct results — apply immediately (streaming callback disabled above
-      // to keep this simple; the returned batch has everything).
-      setNodes((prev) =>
-        prev.map((n) => {
-          const r = batch.results.find((r) => r.id === n.id);
-          if (!r) return n;
-          return { ...n, latency_ms: r.latency_ms ?? null, latency_at: r.tested_at };
-        }),
-      );
-    } catch (e) {
-      setError(typeof e === "string" ? e : String(e));
-    } finally {
-      setPoolTestIds((prev) => {
-        const next = new Set(prev);
-        next.delete(poolId);
-        return next;
-      });
-      await reload();
-    }
-  }
-
-  /** Delete a pool (confirm not needed — menu item is explicit). */
-  async function onDeletePool(poolId: string) {    try {
-      await deletePool(poolId);
-      setPools((prev) => prev.filter((p) => p.id !== poolId));
-      if (currentId === poolId) setCurrentId(null);
-    } catch (e) {
-      setError(typeof e === "string" ? e : String(e));
     }
   }
 
@@ -1309,116 +1180,27 @@ export function NodesPage() {
       )}
 
       {groupBy === "pools" ? (
-        pools.length === 0 ? (
-          <div className="empty card muted">{t("nodes.poolsEmpty")}</div>
-        ) : (
-          <div className="card table-wrap">
-            <div className="node-list">
-              <div className="node-list-head" style={{ gridTemplateColumns: NODE_LIST_COLS }}>
-                <span></span>
-                <span>{t("nodes.sortName")}</span>
-                <span>proto</span>
-                <span>host</span>
-                <span>port</span>
-                <span>{t("nodes.sortLatency")}</span>
-              </div>
-              {pools.map((p) => {
-                const expanded = poolExpanded.has(p.id);
-                const members = poolMembers(p);
-                const isCurrentPool = p.id === currentId;
-                const activeMember = isCurrentPool ? (poolActiveNode[p.id] ?? null) : null;
-                const poolMinLatency =
-                  members.length === 0
-                    ? null
-                    : members.reduce((min, n) => {
-                        const ms = n.latency_ms;
-                        if (ms == null) return min;
-                        return min == null ? ms : Math.min(min, ms);
-                      }, null as number | null);
-                const poolTesting = poolTestIds.has(p.id);
-                return (
-                  <div key={p.id}>
-                    <div
-                      className={`node-list-group-row${isCurrentPool ? " row-active" : ""}`}
-                      style={{ height: NODE_GROUP_H }}
-                      onClick={() => togglePoolExpand(p.id)}
-                      title={t("nodes.groupToggleHint")}
-                    >
-                      <span className={`node-group-caret${expanded ? "" : " closed"}`} />
-                      <span className="node-group-label">
-                        {isCurrentPool ? <span style={{ marginRight: 4 }}>●</span> : null}
-                        {p.name}
-                      </span>
-                      <span className="pool-strategy">
-                        {p.strategy === "select" ? t("chain.strategySelect")
-                          : p.strategy === "url_test" ? t("chain.strategyUrlTest")
-                          : p.strategy === "fallback" ? t("chain.strategyFallback")
-                          : p.strategy === "load_balance" ? t("chain.strategyLoadBalance")
-                          : p.strategy ?? "—"}
-                      </span>
-                      <span className="node-group-count mono">
-                        {p.mode.mode === "explicit" ? p.mode.node_ids.length : members.length}
-                      </span>
-                      <span style={{ flex: 1 }} />
-                      <span className="pool-latency mono" title={t("nodes.poolMinLatencyHint")}>
-                        {poolTesting ? "…" : poolMinLatency != null ? `${poolMinLatency}ms` : "—"}
-                      </span>
-                      <RowMenu
-                        id={`pool-${p.id}`}
-                        openId={openMenuId}
-                        setOpenId={setOpenMenuId}
-                        flipUp={false}
-                        items={[
-                          { key: "use", label: t("chain.poolUse"), onClick: () => void onUsePool(p.id) },
-                          {
-                            key: "test",
-                            label: t("chain.poolTestLatency"),
-                            onClick: () => void onTestPool(p.id),
-                          },
-                          { key: "edit", label: t("common.edit"), onClick: () => setPoolEditor({ pool: p }) },
-                          {
-                            key: "delete",
-                            label: t("common.delete"),
-                            danger: true,
-                            onClick: () => void onDeletePool(p.id),
-                          },
-                        ]}
-                      />
-                    </div>
-                    {expanded &&
-                      (members.length === 0 ? (
-                        <div className="muted" style={{ padding: "0.5rem 0.75rem", fontSize: 12 }}>
-                          {t("chain.noPoolMembers")}
-                        </div>
-                      ) : viewMode === "grid" ? (
-                        <div className="node-grid node-grid-pools">
-                          {members.map((n) => renderNodeCard(n, activeMember))}
-                        </div>
-                      ) : (
-                        members.map((n) => (
-                          <div
-                            key={n.id}
-                            className={`node-list-row${n.id === currentId || n.id === activeMember ? " row-active" : ""}`}
-                            style={{ gridTemplateColumns: NODE_LIST_COLS }}
-                            {...nodeTip(n, t)}
-                          >
-                            <span></span>
-                            <span>{n.name}</span>
-                            <span>{n.protocol}</span>
-                            <span>{n.server}</span>
-                            <span>{n.port}</span>
-                            <span>
-                              {n.latency_ms != null ? `${n.latency_ms}ms` : "—"}
-                            </span>
-                          </div>
-                        ))
-                      ))}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )
+        <PoolsView
+          pools={pools}
+          setPools={setPools}
+          expanded={poolExpanded}
+          setExpanded={setPoolExpanded}
+          nodes={nodes}
+          setNodes={setNodes}
+          viewMode={viewMode}
+          currentId={currentId}
+          setCurrentId={setCurrentId}
+          autoSelect={autoSelect}
+          setAutoSelect={setAutoSelect}
+          busyId={busyId}
+          setBusyId={setBusyId}
+          switching={switching}
+          setSwitching={setSwitching}
+          testing={testing}
+          reload={reload}
+          onError={setError}
+          renderNodeCard={renderNodeCard}
+        />
       ) : loading ? (
         <div className="empty">{t("common.loading")}</div>
       ) : displayed.length === 0 ? (
@@ -1497,17 +1279,6 @@ export function NodesPage() {
           onClose={() => setEditNode(null)}
           onSaved={() => {
             setEditNode(null);
-            void reload();
-          }}
-        />
-      )}
-      {poolEditor && (
-        <PoolEditorModal
-          pool={poolEditor.pool}
-          nodes={nodes}
-          onClose={() => setPoolEditor(null)}
-          onSaved={() => {
-            setPoolEditor(null);
             void reload();
           }}
         />
