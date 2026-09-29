@@ -24,6 +24,7 @@ import { useI18n } from "../i18n";
 import { nodeFeatureBadges, nodeTip } from "../nodeTooltip";
 import { groupNodes, type GroupBy } from "../nodeGroups";
 import { GlassSeg } from "../components/GlassSeg";
+import { PoolEditorModal } from "./ChainPage";
 import { waitForCoreRestart } from "../coreBusy";
 import { useVirtualRange } from "../hooks/useVirtualRange";
 import { filterCustomNodes, applyCustomLatency, sortNodes, type CustomLatencyMap } from "../customNodes";
@@ -158,8 +159,8 @@ export function NodesPage() {
   // runtime nodes are parsed on demand from a raw config body.
   const [editNode, setEditNode] = useState<ProxyNode | null>(null);
 
-  const [section, setSection] = useState<"nodes" | "pools">("nodes");
   const [pools, setPools] = useState<NodePool[]>([]);
+  const [poolEditor, setPoolEditor] = useState<{ pool: NodePool } | null>(null);
 
   const [customRuntime, setCustomRuntime] = useState(false);
   // Xray has no Clash-style delay API — the "real latency" button would
@@ -1038,7 +1039,6 @@ export function NodesPage() {
   }
 
   return (
-
     <div className="page nodes-page">
       {customRuntime && (
         <div className="banner" role="status">
@@ -1049,10 +1049,8 @@ export function NodesPage() {
         <div>
           <h1>{t("nodes.title")}</h1>
           <p className="page-desc">
-            {section === "nodes"
-              ? t("nodes.desc")
-              : t("nodes.poolsDesc")}
-            {section === "nodes" && (
+            {t("nodes.desc")}
+            {groupBy !== "pools" && (
               <>
                 {" · "}
                 <span className="mono">
@@ -1066,15 +1064,6 @@ export function NodesPage() {
               </>
             )}
           </p>
-          <GlassSeg
-            value={section}
-            ariaLabel={t("nodes.section")}
-            onChange={(v) => setSection(v as "nodes" | "pools")}
-            options={[
-              { value: "nodes", label: t("nodes.sectionNodes") },
-              { value: "pools", label: t("nodes.sectionPools") },
-            ]}
-          />
         </div>
         <div className="header-actions nodes-toolbar">
           <input
@@ -1139,6 +1128,7 @@ export function NodesPage() {
                 { value: "sub", label: t("nodes.groupSub") },
                 { value: "proto", label: t("nodes.groupProto") },
                 { value: "country", label: t("nodes.groupCountry") },
+                { value: "pools", label: t("nodes.groupPools") },
               ]}
             />
             <div className="node-group-fold" role="group" aria-label={t("nodes.groupBy")}>
@@ -1179,13 +1169,18 @@ export function NodesPage() {
         </div>
       )}
 
-      {section === "pools" ? (
+      {groupBy === "pools" ? (
         pools.length === 0 ? (
           <div className="empty card muted">{t("nodes.poolsEmpty")}</div>
         ) : (
           <div className="card">
             {pools.map((p) => (
-              <div key={p.id} className="chain-pool-row" style={{ borderBottom: "1px solid var(--border)" }}>
+              <div
+                key={p.id}
+                className="chain-pool-row"
+                style={{ borderBottom: "1px solid var(--border)", cursor: "pointer" }}
+                onClick={() => setPoolEditor({ pool: p })}
+              >
                 <span className="chain-pool-name">
                   <span className="chain-pool-glyph" aria-hidden="true">⊞</span>
                   {p.name}
@@ -1282,6 +1277,17 @@ export function NodesPage() {
           onClose={() => setEditNode(null)}
           onSaved={() => {
             setEditNode(null);
+            void reload();
+          }}
+        />
+      )}
+      {poolEditor && (
+        <PoolEditorModal
+          pool={poolEditor.pool}
+          nodes={nodes}
+          onClose={() => setPoolEditor(null)}
+          onSaved={() => {
+            setPoolEditor(null);
             void reload();
           }}
         />

@@ -463,15 +463,6 @@ function PoolRow({
           {t("chain.usedByChains", { n: usedByChains })}
         </span>
       )}
-      <button
-        type="button"
-        className="icon-btn chain-pool-delete"
-        onClick={onDelete}
-        title={t("common.delete")}
-        aria-label={t("common.delete")}
-      >
-        ×
-      </button>
       <RowMenu
         id={`pool-${pool.id}`}
         openId={openMenuId}
@@ -486,7 +477,7 @@ function PoolRow({
   );
 }
 
-function PoolEditorModal({
+export function PoolEditorModal({
   pool,
   nodes,
   onClose,
@@ -513,7 +504,7 @@ function PoolEditorModal({
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [strategy, setStrategy] = useState(pool?.strategy ?? "select");
+  const [strategy, setStrategy] = useState(pool?.strategy ?? "url-test");
 
   // Stale node IDs: stored IDs that no longer match any current node.
   const staleCount = useMemo(() => {
@@ -528,9 +519,17 @@ function PoolEditorModal({
 
   const filteredNodes = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return nodes;
-    return nodes.filter((n) => n.name.toLowerCase().includes(q));
-  }, [nodes, query]);
+    let list = q ? nodes.filter((n) => n.name.toLowerCase().includes(q)) : nodes;
+    // Selected nodes on top.
+    if (mode === "explicit") {
+      list = [...list].sort((a, b) => {
+        const aSel = nodeIds.has(a.id) ? 0 : 1;
+        const bSel = nodeIds.has(b.id) ? 0 : 1;
+        return aSel - bSel;
+      });
+    }
+    return list;
+  }, [nodes, query, mode, nodeIds]);
 
   function toggleNode(id: string) {
     setNodeIds((cur) => {

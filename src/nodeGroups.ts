@@ -18,7 +18,7 @@
 import { subLabel } from "./nodeTooltip";
 import type { ProxyNode } from "./types";
 
-export type GroupBy = "none" | "sub" | "proto" | "country";
+export type GroupBy = "none" | "sub" | "proto" | "country" | "pools";
 
 export interface NodeGroup {
   /** Stable key (subscription id / protocol string / region id). */
