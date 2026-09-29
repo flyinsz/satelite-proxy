@@ -2,7 +2,7 @@
 //! multi-hop chains built from them (see `config::builder`'s
 //! `build_pool_selectors` / `build_chain_outbounds`).
 
-use crate::domain::{ChainHop, NodePool, PoolMode, ProxyChain};
+use crate::domain::{ChainHop, NodePool, PoolMode, PoolStrategy, ProxyChain};
 use crate::state::AppState;
 use tauri::{AppHandle, State};
 
@@ -38,9 +38,13 @@ pub fn update_pool(
     id: String,
     name: String,
     mode: PoolMode,
+    strategy: Option<PoolStrategy>,
+    probe_url: Option<String>,
+    interval: Option<u32>,
+    tolerance: Option<u32>,
 ) -> Result<NodePool, String> {
     let pool = state
-        .with_store_mut(|store| store.update_pool(&id, &name, mode))
+        .with_store_mut(|store| store.update_pool(&id, &name, mode, strategy, probe_url, interval, tolerance))
         .map_err(|e| e.to_string())?;
     // A pool's membership feeds every chain/rule that references it —
     // always worth a restart, same as editing a rule set's keyword filter.

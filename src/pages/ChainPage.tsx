@@ -513,6 +513,18 @@ function PoolEditorModal({
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [strategy, setStrategy] = useState(pool?.strategy ?? "select");
+
+  // Stale node IDs: stored IDs that no longer match any current node.
+  const staleCount = useMemo(() => {
+    if (mode !== "explicit" || !pool || pool.mode.mode !== "explicit") return 0;
+    return pool.mode.node_ids.filter((id: string) => !nodes.some((n) => n.id === id)).length;
+  }, [pool, nodes, mode]);
+
+  const validStoredCount = useMemo(() => {
+    if (mode !== "explicit" || !pool || pool.mode.mode !== "explicit") return 0;
+    return pool.mode.node_ids.filter((id: string) => nodes.some((n) => n.id === id)).length;
+  }, [pool, nodes, mode]);
 
   const filteredNodes = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -554,7 +566,15 @@ function PoolEditorModal({
     setError(null);
     try {
       if (pool) {
-        await updatePool(pool.id, trimmed, poolMode);
+        await updatePool(
+          pool.id,
+          trimmed,
+          poolMode,
+          strategy,
+          null,  // probe_url
+          strategy === "url-test" || strategy === "fallback" || strategy === "load-balance" ? 300 : null,  // interval
+          strategy === "url-test" || strategy === "fallback" || strategy === "load-balance" ? 50 : null,  // tolerance
+        );
       } else {
         await createPool(trimmed, poolMode);
       }
@@ -601,9 +621,31 @@ function PoolEditorModal({
               ]}
             />
           </label>
+          <label className="field">
+            <span>{t("chain.poolStrategy")}</span>
+            <GlassSeg
+              value={strategy}
+              ariaLabel={t("chain.poolStrategy")}
+              onChange={(v) => {
+                setStrategy(v as string);
+                // Auto-set interval/tolerance defaults when switching to a probing strategy.
+              }}
+              options={[
+                { value: "select", label: t("chain.strategySelect") },
+                { value: "url-test", label: t("chain.strategyUrlTest") },
+                { value: "fallback", label: t("chain.strategyFallback") },
+                { value: "load-balance", label: t("chain.strategyLoadBalance") },
+              ]}
+            />
+          </label>
           {mode === "explicit" ? (
             <div className="field rule-node-pick">
               <span>{t("chain.poolPickNodes")}</span>
+              {staleCount > 0 && (
+                <p className="banner warning" style={{ margin: "0 0 6px", fontSize: 12 }}>
+                  {t("chain.poolStaleWarning", { n: staleCount, m: validStoredCount })}
+                </p>
+              )}
               {nodes.length === 0 ? (
                 <p className="muted" style={{ margin: 0, fontSize: 12 }}>
                   {t("rules.noNodes")}

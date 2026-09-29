@@ -1340,7 +1340,7 @@ fn build_pool_selectors(
             continue;
         }
         match pool.strategy {
-            PoolStrategy::UrlTest => {
+            PoolStrategy::UrlTest | PoolStrategy::Fallback | PoolStrategy::LoadBalance => {
                 // urltest must never include "direct" — it would win on latency.
                 let url = pool
                     .probe_url

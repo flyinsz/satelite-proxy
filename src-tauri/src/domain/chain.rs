@@ -12,14 +12,27 @@ pub enum PoolStrategy {
     Select,
     /// url-test — the kernel probes all members and picks the lowest latency.
     UrlTest,
+    /// fallback — try members in order, move to next on failure.
+    Fallback,
+    /// load-balance — distribute traffic across members (mihomo native,
+    /// sing-box approximated as urltest).
+    LoadBalance,
 }
 
 impl PoolStrategy {
+    /// Sing-box outbound type string for this strategy.
+    pub fn as_outbound_type(self) -> &'static str {
+        match self {
+            Self::Select => "selector",
+            Self::UrlTest | Self::Fallback | Self::LoadBalance => "urltest",
+        }
+    }
+
     pub fn from_clash_kind(kind: &str) -> Self {
         match kind.trim().to_ascii_lowercase().as_str() {
             "url-test" => Self::UrlTest,
-            // fallback / load-balance are approximated as url-test for now.
-            "fallback" | "load-balance" => Self::UrlTest,
+            "fallback" => Self::Fallback,
+            "load-balance" => Self::LoadBalance,
             _ => Self::Select,
         }
     }

@@ -1949,6 +1949,10 @@ impl AppStore {
         id: &str,
         name: &str,
         mode: crate::domain::PoolMode,
+        strategy: Option<crate::domain::PoolStrategy>,
+        probe_url: Option<String>,
+        interval: Option<u32>,
+        tolerance: Option<u32>,
     ) -> AppResult<crate::domain::NodePool> {
         let n = name.trim();
         if n.is_empty() {
@@ -1972,6 +1976,24 @@ impl AppStore {
             .ok_or_else(|| AppError::NotFound(id.to_string()))?;
         pool.name = n.to_string();
         pool.mode = mode;
+        if let Some(s) = strategy {
+            pool.strategy = s;
+        }
+        if let Some(u) = probe_url.and_then(|s| {
+            let trimmed = s.trim().to_string();
+            if trimmed.is_empty() { None } else { Some(trimmed) }
+        }) {
+            pool.probe_url = Some(u);
+        } else {
+            // `None` or empty string → clear.
+            pool.probe_url = None;
+        }
+        if let Some(v) = interval {
+            pool.interval = Some(v);
+        }
+        if let Some(v) = tolerance {
+            pool.tolerance = Some(v);
+        }
         Ok(pool.clone())
     }
 

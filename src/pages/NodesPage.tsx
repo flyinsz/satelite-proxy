@@ -6,6 +6,7 @@ import {
   listAllNodes,
   listCustomConfigNodes,
   listNodeIds,
+  listPools,
   onNodeLatencyChanged,
   onProxySnapshot,
   pingNodesLatency,
@@ -27,7 +28,7 @@ import { waitForCoreRestart } from "../coreBusy";
 import { useVirtualRange } from "../hooks/useVirtualRange";
 import { filterCustomNodes, applyCustomLatency, sortNodes, type CustomLatencyMap } from "../customNodes";
 import { createLatencyResultBuffer } from "../latencyStream";
-import type { AutoSelectMode, ProxyNode, SortMode, ViewMode } from "../types";
+import type { AutoSelectMode, NodePool, ProxyNode, SortMode, ViewMode } from "../types";
 
 const VIRTUALIZE_AFTER = 200;
 const LIST_ROW_HEIGHT = 49;
@@ -157,6 +158,9 @@ export function NodesPage() {
   // runtime nodes are parsed on demand from a raw config body.
   const [editNode, setEditNode] = useState<ProxyNode | null>(null);
 
+  const [section, setSection] = useState<"nodes" | "pools">("nodes");
+  const [pools, setPools] = useState<NodePool[]>([]);
+
   const [customRuntime, setCustomRuntime] = useState(false);
   // Xray has no Clash-style delay API — the "real latency" button would
   // silently degrade to a plain TCP ping. Gray it out instead (ping stays).
@@ -278,6 +282,8 @@ export function NodesPage() {
       const filtered = filterCustomNodes(all, query, sortMode, 0, Number.MAX_SAFE_INTEGER);
       setNodes(filtered.nodes);
       setTotal(filtered.total);
+      // Load node pools list (used in pools tab view).
+      try { setPools(await listPools()); } catch {}
     } catch (e) {
       setError(typeof e === "string" ? e : String(e));
     } finally {
@@ -1043,17 +1049,32 @@ export function NodesPage() {
         <div>
           <h1>{t("nodes.title")}</h1>
           <p className="page-desc">
-            {t("nodes.desc")}
-            {" · "}
-            <span className="mono">
-              {query.trim()
-                ? t("nodes.countFiltered", {
-                    shown: displayed.length,
-                    total,
-                  })
-                : t("nodes.count", { n: total })}
-            </span>
+            {section === "nodes"
+              ? t("nodes.desc")
+              : t("nodes.poolsDesc")}
+            {section === "nodes" && (
+              <>
+                {" · "}
+                <span className="mono">
+                  {query.trim()
+                    ? t("nodes.countFiltered", {
+                        shown: displayed.length,
+                        total,
+                      })
+                    : t("nodes.count", { n: total })}
+                </span>
+              </>
+            )}
           </p>
+          <GlassSeg
+            value={section}
+            ariaLabel={t("nodes.section")}
+            onChange={(v) => setSection(v as "nodes" | "pools")}
+            options={[
+              { value: "nodes", label: t("nodes.sectionNodes") },
+              { value: "pools", label: t("nodes.sectionPools") },
+            ]}
+          />
         </div>
         <div className="header-actions nodes-toolbar">
           <input
@@ -1158,7 +1179,32 @@ export function NodesPage() {
         </div>
       )}
 
-      {loading ? (
+      {section === "pools" ? (
+        pools.length === 0 ? (
+          <div className="empty card muted">{t("nodes.poolsEmpty")}</div>
+        ) : (
+          <div className="card">
+            {pools.map((p) => (
+              <div key={p.id} className="chain-pool-row" style={{ borderBottom: "1px solid var(--border)" }}>
+                <span className="chain-pool-name">
+                  <span className="chain-pool-glyph" aria-hidden="true">⊞</span>
+                  {p.name}
+                </span>
+                <span className="chain-row-meta">
+                  {p.strategy === "select" ? t("chain.strategySelect")
+                    : p.strategy === "url-test" ? t("chain.strategyUrlTest")
+                    : p.strategy === "fallback" ? t("chain.strategyFallback")
+                    : p.strategy === "load-balance" ? t("chain.strategyLoadBalance")
+                    : p.strategy ?? "—"}
+                </span>
+                <span className={`pill ${p.mode.mode === "explicit" ? "target-node" : "target-smart"}`}>
+                  {p.mode.mode === "explicit" ? t("chain.poolModeExplicit") : t("chain.poolModeKeyword")}
+                </span>
+              </div>
+            ))}
+          </div>
+        )
+      ) : loading ? (
         <div className="empty">{t("common.loading")}</div>
       ) : displayed.length === 0 ? (
         <div className="empty card muted">

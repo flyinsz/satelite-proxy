@@ -1091,8 +1091,24 @@ export function createPool(name: string, mode: PoolMode) {
   return invoke<NodePool>("create_pool", { name, mode });
 }
 
-export function updatePool(id: string, name: string, mode: PoolMode) {
-  return invoke<NodePool>("update_pool", { id, name, mode });
+export function updatePool(
+  id: string,
+  name: string,
+  mode: PoolMode,
+  strategy?: string | null,
+  probeUrl?: string | null,
+  interval?: number | null,
+  tolerance?: number | null,
+) {
+  return invoke<NodePool>("update_pool", {
+    id,
+    name,
+    mode,
+    strategy: strategy ?? null,
+    probeUrl: probeUrl ?? null,
+    interval: interval ?? null,
+    tolerance: tolerance ?? null,
+  });
 }
 
 export function deletePool(id: string) {
