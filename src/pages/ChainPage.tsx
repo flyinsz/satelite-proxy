@@ -375,14 +375,21 @@ export function RowMenu({
   const open = openId === id;
 
   return (
-    <div className="rule-menu chain-menu" data-chain-menu>
+    <div
+      className="rule-menu chain-menu"
+      data-chain-menu
+      onClick={(e) => e.stopPropagation()}
+    >
       <button
         type="button"
         className="rule-menu-trigger"
         aria-label={t("common.actions")}
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpenId(open ? null : id)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpenId(open ? null : id);
+        }}
       >
         ⋮
       </button>

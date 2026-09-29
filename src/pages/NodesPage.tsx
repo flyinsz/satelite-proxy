@@ -1312,6 +1312,10 @@ export function NodesPage() {
                         <div className="muted" style={{ padding: "0.5rem 0.75rem", fontSize: 12 }}>
                           {t("chain.noPoolMembers")}
                         </div>
+                      ) : viewMode === "grid" ? (
+                        <div className="node-grid node-grid-pools">
+                          {members.map((n) => renderNodeCard(n))}
+                        </div>
                       ) : (
                         members.map((n) => (
                           <div

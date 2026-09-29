@@ -157,14 +157,55 @@ pub fn build_mihomo_config(
         // in the main group so live hot-switch and persisted pool picks work.
         let mut members = tags.clone();
         for pool in &opts.pools {
-            if pool.enabled {
+            if pool.enabled && !crate::config::builder::pool_member_tags(pool, &supported, &tags).is_empty() {
                 let tag = pool.outbound_tag();
                 if !members.iter().any(|t| t == &tag) {
                     members.push(tag);
                 }
             }
         }
-        groups.push(select_group(MAIN_GROUP, members, Some(&selected_tag)));
+        groups.push(select_group(MAIN_GROUP, members, Some(selected_tag.clone())));
+    }
+
+    // Named node pools (Proxy Chain feature): one proxy-group per enabled,
+    // non-empty pool, tagged `pool-<id>` — the same tags the main group
+    // references above, and the same strategy mapping as sing-box's
+    // `build_pool_selectors`. Without these groups, a pool picked as the
+    // current manual egress would reference a nonexistent outbound and
+    // mihomo's config check would fail.
+    for pool in &opts.pools {
+        if !pool.enabled {
+            continue;
+        }
+        let members = crate::config::builder::pool_member_tags(pool, &supported, &tags);
+        if members.is_empty() {
+            continue;
+        }
+        let tag = pool.outbound_tag();
+        use crate::domain::PoolStrategy;
+        let group = match pool.strategy {
+            PoolStrategy::UrlTest | PoolStrategy::Fallback | PoolStrategy::LoadBalance => {
+                let url = pool
+                    .probe_url
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_else(|| probe_url.clone());
+                let mut g = url_test_group(&tag, members.clone(), &url);
+                if let Some(interval) = pool.interval {
+                    g.insert(str_yaml("interval"), num_yaml(interval as u64));
+                }
+                if let Some(tolerance) = pool.tolerance {
+                    g.insert(str_yaml("tolerance"), num_yaml(tolerance as u64));
+                }
+                g
+            }
+            PoolStrategy::Select => {
+                let default = members.first().cloned();
+                select_group(&tag, members, default)
+            }
+        };
+        groups.push(group);
     }
 
     // Filter-strategy sets and explicit node-pool sets: whole set routes
@@ -197,7 +238,7 @@ pub fn build_mihomo_config(
         groups.push(select_group(
             &group_tag,
             pool.clone(),
-            pool.first().map(String::as_str),
+            pool.first().cloned(),
         ));
         filter_group_tags.insert(set.id.clone(), group_tag);
     }
@@ -222,7 +263,7 @@ pub fn build_mihomo_config(
         groups.push(select_group(
             &group_tag,
             pool.clone(),
-            pool.first().map(String::as_str),
+            pool.first().cloned(),
         ));
         smart_group_tags.insert(rule.id.clone(), group_tag);
     }
@@ -402,10 +443,10 @@ fn probe_url_or_default(opts: &BuildOptions) -> String {
     }
 }
 
-fn select_group(name: &str, mut members: Vec<String>, default_first: Option<&str>) -> Mapping {
+fn select_group(name: &str, mut members: Vec<String>, default_first: Option<String>) -> Mapping {
     if let Some(first) = default_first {
-        members.retain(|m| m != first);
-        members.insert(0, first.to_string());
+        members.retain(|m| m != &first);
+        members.insert(0, first);
     }
     let mut g = Mapping::new();
     g.insert(str_yaml("name"), str_yaml(name));
