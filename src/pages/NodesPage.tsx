@@ -14,6 +14,8 @@ import {
   testCustomNodesLatency,
   testNodesLatency,
   toggleFavoriteNode,
+  selectPool,
+  deletePool,
 } from "../api";
 import { GlassButton } from "../components/GlassButton";
 import { GlassSwitch } from "../components/GlassSwitch";
@@ -399,9 +401,17 @@ export function NodesPage() {
     });
   }
   function collapseAll() {
+    if (groupBy === "pools") {
+      setPoolExpanded(new Set(pools.map((p) => p.id)));
+      return;
+    }
     setCollapsedGroups(new Set(groups.map((g) => g.key)));
   }
   function expandAll() {
+    if (groupBy === "pools") {
+      setPoolExpanded(new Set());
+      return;
+    }
     setCollapsedGroups(new Set());
   }
 
@@ -558,6 +568,42 @@ export function NodesPage() {
     } finally {
       setSwitching(false);
       setBusyId(null);
+    }
+  }
+
+  /** Select a pool as the current manual egress (pool's selector outbound). */
+  async function onUsePool(poolId: string) {
+    if (busyId || switching) return;
+    setBusyId(poolId);
+    setError(null);
+    try {
+      const leavingKernel = autoSelect === "kernel";
+      await selectPool(poolId);
+      setCurrentId(poolId);
+      setAutoSelect("off");
+      const status = await getProxyStatus().catch(() => null);
+      if (!status?.running) {
+        await generateSingboxConfig();
+      } else if (leavingKernel) {
+        setSwitching(true);
+        await waitForCoreRestart();
+      }
+    } catch (e) {
+      setError(typeof e === "string" ? e : String(e));
+    } finally {
+      setSwitching(false);
+      setBusyId(null);
+    }
+  }
+
+  /** Delete a pool (confirm not needed — menu item is explicit). */
+  async function onDeletePool(poolId: string) {
+    try {
+      await deletePool(poolId);
+      setPools((prev) => prev.filter((p) => p.id !== poolId));
+      if (currentId === poolId) setCurrentId(null);
+    } catch (e) {
+      setError(typeof e === "string" ? e : String(e));
     }
   }
 
@@ -1216,16 +1262,20 @@ export function NodesPage() {
               {pools.map((p) => {
                 const expanded = poolExpanded.has(p.id);
                 const members = poolMembers(p);
+                const isCurrentPool = p.id === currentId;
                 return (
                   <div key={p.id}>
                     <div
-                      className="node-list-group-row"
+                      className={`node-list-group-row${isCurrentPool ? " row-active" : ""}`}
                       style={{ height: NODE_GROUP_H }}
                       onClick={() => togglePoolExpand(p.id)}
                       title={t("nodes.groupToggleHint")}
                     >
                       <span className={`node-group-caret${expanded ? "" : " closed"}`} />
-                      <span className="node-group-label">{p.name}</span>
+                      <span className="node-group-label">
+                        {isCurrentPool ? <span style={{ marginRight: 4 }}>●</span> : null}
+                        {p.name}
+                      </span>
                       <span className="muted" style={{ fontSize: 12 }}>
                         {p.strategy === "select" ? t("chain.strategySelect")
                           : p.strategy === "url_test" ? t("chain.strategyUrlTest")
@@ -1246,7 +1296,14 @@ export function NodesPage() {
                         setOpenId={setOpenMenuId}
                         flipUp={false}
                         items={[
+                          { key: "use", label: t("chain.poolUse"), onClick: () => void onUsePool(p.id) },
                           { key: "edit", label: t("common.edit"), onClick: () => setPoolEditor({ pool: p }) },
+                          {
+                            key: "delete",
+                            label: t("common.delete"),
+                            danger: true,
+                            onClick: () => void onDeletePool(p.id),
+                          },
                         ]}
                       />
                     </div>
@@ -1259,8 +1316,9 @@ export function NodesPage() {
                         members.map((n) => (
                           <div
                             key={n.id}
-                            className="node-list-row"
+                            className={`node-list-row${n.id === currentId ? " row-active" : ""}`}
                             style={{ gridTemplateColumns: NODE_LIST_COLS }}
+                            {...nodeTip(n, t)}
                           >
                             <span></span>
                             <span>{n.name}</span>

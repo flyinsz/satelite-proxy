@@ -1115,6 +1115,11 @@ export function deletePool(id: string) {
   return invoke<void>("delete_pool", { id });
 }
 
+/** Select a pool as the current manual egress (live hot-switch when running). */
+export function selectPool(poolId: string) {
+  return invoke<ProxyStatus>("select_pool", { poolId });
+}
+
 export function listChains() {
   return invoke<ProxyChain[]>("list_chains");
 }

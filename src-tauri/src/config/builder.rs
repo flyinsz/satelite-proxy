@@ -278,7 +278,7 @@ pub fn build_singbox_config(nodes: &[ProxyNode], opts: &BuildOptions) -> AppResu
         crate::app_log::warn("singbox_config", format!("filtered node: {reason}"));
     }
 
-    let selected_tag = resolve_selected_tag(nodes, &tags, opts.current_node_id.as_deref());
+    let selected_tag = resolve_selected_tag(nodes, &tags, &opts.pools, opts.current_node_id.as_deref());
     let effective_rules = effective_route_rules(&opts.rule_sets, &opts.rules);
 
     let mut outbounds = Vec::new();
@@ -313,6 +313,17 @@ pub fn build_singbox_config(nodes: &[ProxyNode], opts: &BuildOptions) -> AppResu
     } else {
         let mut selector_outbounds = tags.clone();
         selector_outbounds.push("direct".into());
+        // Named pools are user-selectable egress targets too — include each
+        // enabled pool's outbound tag so the main group can route into it
+        // (both for live Clash hot-switch and persisted current pool picks).
+        for pool in &opts.pools {
+            if pool.enabled {
+                let tag = pool.outbound_tag();
+                if !selector_outbounds.iter().any(|t| t == &tag) {
+                    selector_outbounds.push(tag);
+                }
+            }
+        }
         outbounds.push(json!({
             "type": "selector",
             "tag": "proxy",
@@ -1171,9 +1182,15 @@ fn build_headless_rules(rules: &[Rule]) -> Option<Vec<Value>> {
 pub(crate) fn resolve_selected_tag(
     nodes: &[ProxyNode],
     tags: &[String],
+    pools: &[crate::domain::NodePool],
     current_id: Option<&str>,
 ) -> String {
     if let Some(id) = current_id {
+        // A pool id resolves to the pool's own outbound tag (pool-<hash>),
+        // which is also a member of the main group when enabled.
+        if let Some(pool) = pools.iter().find(|p| p.id == id && p.enabled) {
+            return pool.outbound_tag();
+        }
         if let Some(node) = nodes.iter().find(|n| n.id == id) {
             let tag = outbound_tag(node);
             if tags.iter().any(|t| t == &tag) {

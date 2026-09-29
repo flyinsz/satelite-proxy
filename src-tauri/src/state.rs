@@ -1487,6 +1487,59 @@ impl AppState {
         Ok((settings, restart_needed, selected_live))
     }
 
+    /// Select a named node pool as the current manual egress: persist
+    /// `current_node_id = <pool id>` (manual mode), and hot-switch the main
+    /// `proxy` group to the pool's outbound tag when the kernel is running
+    /// and has a Clash API. Xray / kernel-auto need a core restart instead.
+    /// Returns `(restart_needed, switched_live)`.
+    pub fn select_pool_serialized(&self, pool_id: &str) -> AppResult<(bool, bool)> {
+        let core_running = self.is_core_running();
+        let _operation = self.begin_core_transition()?;
+        let core_kind = {
+            let kind = crate::core::CoreKind::parse(
+                self.with_store(|store| Ok(store.settings.core_type.clone()))?
+                    .as_str(),
+            );
+            kind
+        };
+        let (tag, kernel_auto, pool_id_owned) = self.with_store(|store| {
+            if store.settings.runtime_source().is_custom() {
+                return Err(crate::error::AppError::Core(
+                    "自写配置模式下无法切换节点".into(),
+                ));
+            }
+            let pool = store
+                .pools
+                .iter()
+                .find(|p| p.id == pool_id && p.enabled)
+                .ok_or_else(|| crate::error::AppError::NotFound(pool_id.to_string()))?;
+            Ok((
+                pool.outbound_tag(),
+                store.settings.auto_select.is_kernel(),
+                pool_id.to_string(),
+            ))
+        })?;
+        let api = {
+            let runtime = self.lock_runtime();
+            runtime.clash_api_clone()
+        };
+        let selected_live = if core_kind == crate::core::CoreKind::Xray || kernel_auto {
+            false
+        } else if let Some(api) = api {
+            api.select_proxy("proxy", &tag)?;
+            let _ = api.close_all_connections();
+            true
+        } else {
+            false
+        };
+        let was_kernel = self.with_store_mut(|store| {
+            let was_kernel = apply_selected_node(&mut store.settings, pool_id_owned, true);
+            Ok(was_kernel)
+        })?;
+        let restart_needed = was_kernel || (core_kind == crate::core::CoreKind::Xray && core_running);
+        Ok((restart_needed, selected_live))
+    }
+
     /// When auto_select=kernel, read Clash API group `now` and persist as current_node_id.
     pub fn schedule_kernel_selection_sync(app: tauri::AppHandle) {
         use tauri::Manager;

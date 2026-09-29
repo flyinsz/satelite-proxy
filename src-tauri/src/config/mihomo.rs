@@ -139,7 +139,7 @@ pub fn build_mihomo_config(
     let supported: Vec<ProxyNode> = emitted;
 
     let tags: Vec<String> = supported.iter().map(outbound_tag).collect();
-    let selected_tag = resolve_selected_tag(&supported, &tags, opts.current_node_id.as_deref());
+    let selected_tag = resolve_selected_tag(&supported, &tags, &opts.pools, opts.current_node_id.as_deref());
 
     // —— proxy-groups ——
     // Kernel auto-select: the main group IS a url-test group over all nodes
@@ -153,7 +153,18 @@ pub fn build_mihomo_config(
     if opts.auto_select.is_kernel() {
         groups.push(url_test_group(MAIN_GROUP, tags.clone(), &probe_url));
     } else {
-        groups.push(select_group(MAIN_GROUP, tags.clone(), Some(&selected_tag)));
+        // Pool outbounds are selectable egress targets — include their tags
+        // in the main group so live hot-switch and persisted pool picks work.
+        let mut members = tags.clone();
+        for pool in &opts.pools {
+            if pool.enabled {
+                let tag = pool.outbound_tag();
+                if !members.iter().any(|t| t == &tag) {
+                    members.push(tag);
+                }
+            }
+        }
+        groups.push(select_group(MAIN_GROUP, members, Some(&selected_tag)));
     }
 
     // Filter-strategy sets and explicit node-pool sets: whole set routes
