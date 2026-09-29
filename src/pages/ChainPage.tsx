@@ -358,7 +358,7 @@ type RowMenuItem = {
     closes the previous — per-instance state used to leave both open. Rows in
     the lower half of a list pass flipUp so the popup opens toward the
     roomier side. */
-function RowMenu({
+export function RowMenu({
   id,
   openId,
   setOpenId,
@@ -594,7 +594,7 @@ export function PoolEditorModal({
           poolMode,
           strategy,
           null,  // probe_url
-          strategy === "url-test" || strategy === "fallback" || strategy === "load-balance" ? 300 : null,  // interval
+          strategy === "url_test" || strategy === "fallback" || strategy === "load_balance" ? 300 : null,  // interval
           strategy === "url-test" || strategy === "fallback" || strategy === "load-balance" ? 50 : null,  // tolerance
         );
       } else {
@@ -738,9 +738,9 @@ export function PoolEditorModal({
               onChange={(v) => setStrategy(v as string)}
               options={[
                 { value: "select", label: t("chain.strategySelect") },
-                { value: "url-test", label: t("chain.strategyUrlTest") },
+                { value: "url_test", label: t("chain.strategyUrlTest") },
                 { value: "fallback", label: t("chain.strategyFallback") },
-                { value: "load-balance", label: t("chain.strategyLoadBalance") },
+                { value: "load_balance", label: t("chain.strategyLoadBalance") },
               ]}
             />
           </label>
