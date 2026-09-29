@@ -505,6 +505,7 @@ export function PoolEditorModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [strategy, setStrategy] = useState(pool?.strategy ?? "url-test");
+  const [defaultNode, setDefaultNode] = useState<string | null>(null);
 
   // Stale node IDs: stored IDs that no longer match any current node.
   const staleCount = useMemo(() => {
@@ -545,6 +546,12 @@ export function PoolEditorModal({
   const matchedNodes = useMemo(
     () => nodes.filter((n) => poolKeywordMatch(n.name, parseKeywords(include), parseKeywords(exclude))),
     [nodes, include, exclude],
+  );
+
+  // Pool member nodes for the manual-select picker (from explicit selection or keyword match).
+  const poolMemberNodes = useMemo(
+    () => nodes.filter((n) => mode === "explicit" ? nodeIds.has(n.id) : poolKeywordMatch(n.name, parseKeywords(include), parseKeywords(exclude))),
+    [nodes, mode, nodeIds, include, exclude],
   );
 
   async function onSubmit() {
@@ -617,23 +624,6 @@ export function PoolEditorModal({
               options={[
                 { value: "explicit", label: t("chain.poolModeExplicit") },
                 { value: "keyword", label: t("chain.poolModeKeyword") },
-              ]}
-            />
-          </label>
-          <label className="field">
-            <span>{t("chain.poolStrategy")}</span>
-            <GlassSeg
-              value={strategy}
-              ariaLabel={t("chain.poolStrategy")}
-              onChange={(v) => {
-                setStrategy(v as string);
-                // Auto-set interval/tolerance defaults when switching to a probing strategy.
-              }}
-              options={[
-                { value: "select", label: t("chain.strategySelect") },
-                { value: "url-test", label: t("chain.strategyUrlTest") },
-                { value: "fallback", label: t("chain.strategyFallback") },
-                { value: "load-balance", label: t("chain.strategyLoadBalance") },
               ]}
             />
           </label>
@@ -721,6 +711,45 @@ export function PoolEditorModal({
                   </span>
                 )}
               </div>
+            </div>
+          )}
+          {/* Strategy selector — at the bottom so it's not confused with member selection. */}
+          <label className="field">
+            <span>{t("chain.poolStrategy")}</span>
+            <GlassSeg
+              value={strategy}
+              ariaLabel={t("chain.poolStrategy")}
+              onChange={(v) => setStrategy(v as string)}
+              options={[
+                { value: "select", label: t("chain.strategySelect") },
+                { value: "url-test", label: t("chain.strategyUrlTest") },
+                { value: "fallback", label: t("chain.strategyFallback") },
+                { value: "load-balance", label: t("chain.strategyLoadBalance") },
+              ]}
+            />
+          </label>
+          {strategy === "select" && (
+            <div className="field rule-node-pick">
+              <span>{t("chain.poolDefaultNode")}</span>
+              {poolMemberNodes.length === 0 ? (
+                <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+                  {t("chain.noPoolMembers")}
+                </p>
+              ) : (
+                <div className="chain-pool-manual-pick">
+                  {poolMemberNodes.map((n) => (
+                    <label key={n.id} className="chain-pool-manual-item">
+                      <input
+                        type="radio"
+                        name="pool-default-node"
+                        checked={defaultNode === n.id}
+                        onChange={() => setDefaultNode(n.id)}
+                      />
+                      <span>{n.name}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
