@@ -168,6 +168,8 @@ export function NodesPage() {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   // poolId → currently-effective node id inside that pool (its group `now`).
   const [poolActiveNode, setPoolActiveNode] = useState<Record<string, string | null>>({});
+  // poolId set — a latency test for that pool's members is in flight.
+  const [poolTestIds, setPoolTestIds] = useState<Set<string>>(new Set());
 
   const togglePoolExpand = useCallback((id: string) => {
     setPoolExpanded((cur) => {
@@ -617,9 +619,49 @@ export function NodesPage() {
     }
   }
 
-  /** Delete a pool (confirm not needed — menu item is explicit). */
-  async function onDeletePool(poolId: string) {
+  /** Latency-test every member of one pool (streaming, same path as the
+   *  toolbar test button). Results land back in the node list, so the pool
+   *  row's min-latency badge updates automatically. */
+  async function onTestPool(poolId: string) {
+    if (poolTestIds.has(poolId) || testing) return;
+    const pool = pools.find((p) => p.id === poolId);
+    if (!pool) return;
+    const members = poolMembers(pool);
+    if (members.length === 0) return;
+    setPoolTestIds((prev) => new Set(prev).add(poolId));
+    setError(null);
+    const ids = members.map((n) => n.id);
+    const idSet = new Set(ids);
+    setNodes((prev) =>
+      prev.map((n) =>
+        idSet.has(n.id) ? { ...n, latency_ms: undefined, latency_at: undefined } : n,
+      ),
+    );
     try {
+      const batch = await testNodesLatency(ids, 3000, () => {});
+      // Direct results — apply immediately (streaming callback disabled above
+      // to keep this simple; the returned batch has everything).
+      setNodes((prev) =>
+        prev.map((n) => {
+          const r = batch.results.find((r) => r.id === n.id);
+          if (!r) return n;
+          return { ...n, latency_ms: r.latency_ms ?? null, latency_at: r.tested_at };
+        }),
+      );
+    } catch (e) {
+      setError(typeof e === "string" ? e : String(e));
+    } finally {
+      setPoolTestIds((prev) => {
+        const next = new Set(prev);
+        next.delete(poolId);
+        return next;
+      });
+      await reload();
+    }
+  }
+
+  /** Delete a pool (confirm not needed — menu item is explicit). */
+  async function onDeletePool(poolId: string) {    try {
       await deletePool(poolId);
       setPools((prev) => prev.filter((p) => p.id !== poolId));
       if (currentId === poolId) setCurrentId(null);
@@ -1285,6 +1327,15 @@ export function NodesPage() {
                 const members = poolMembers(p);
                 const isCurrentPool = p.id === currentId;
                 const activeMember = isCurrentPool ? (poolActiveNode[p.id] ?? null) : null;
+                const poolMinLatency =
+                  members.length === 0
+                    ? null
+                    : members.reduce((min, n) => {
+                        const ms = n.latency_ms;
+                        if (ms == null) return min;
+                        return min == null ? ms : Math.min(min, ms);
+                      }, null as number | null);
+                const poolTesting = poolTestIds.has(p.id);
                 return (
                   <div key={p.id}>
                     <div
@@ -1311,6 +1362,9 @@ export function NodesPage() {
                       <span className="node-group-count mono">
                         {p.mode.mode === "explicit" ? p.mode.node_ids.length : members.length}
                       </span>
+                      <span className="pool-latency mono" title={t("nodes.poolMinLatencyHint")}>
+                        {poolTesting ? "…" : poolMinLatency != null ? `${poolMinLatency}ms` : "—"}
+                      </span>
                       <span style={{ flex: 1 }} />
                       <RowMenu
                         id={`pool-${p.id}`}
@@ -1319,6 +1373,11 @@ export function NodesPage() {
                         flipUp={false}
                         items={[
                           { key: "use", label: t("chain.poolUse"), onClick: () => void onUsePool(p.id) },
+                          {
+                            key: "test",
+                            label: t("chain.poolTestLatency"),
+                            onClick: () => void onTestPool(p.id),
+                          },
                           { key: "edit", label: t("common.edit"), onClick: () => setPoolEditor({ pool: p }) },
                           {
                             key: "delete",

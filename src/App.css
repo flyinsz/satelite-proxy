@@ -2390,6 +2390,17 @@ button {
   margin-left: 0.35rem;
 }
 
+/* Pool row min-latency badge (lowest latency across pool members). */
+.pool-latency {
+  margin-left: 0.5rem;
+  padding: 1px 6px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--muted) 10%, transparent);
+  color: var(--muted);
+  font-size: 0.72rem;
+  flex-shrink: 0;
+}
+
 
 .node-virtual-spacer {
   padding: 0;
