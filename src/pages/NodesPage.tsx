@@ -161,6 +161,35 @@ export function NodesPage() {
 
   const [pools, setPools] = useState<NodePool[]>([]);
   const [poolEditor, setPoolEditor] = useState<{ pool: NodePool } | null>(null);
+  const [poolExpanded, setPoolExpanded] = useState<Set<string>>(new Set());
+
+  const togglePoolExpand = useCallback((id: string) => {
+    setPoolExpanded((cur) => {
+      const next = new Set(cur);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Resolve pool member nodes for the drawer view.
+  const poolMembers = useCallback(
+    (pool: NodePool): ProxyNode[] => {
+      if (pool.mode.mode === "explicit") {
+        const ids = pool.mode.node_ids;
+        return nodes.filter((n) => ids.includes(n.id));
+      }
+      // keyword mode
+      const { include, exclude } = pool.mode;
+      return nodes.filter((n) => {
+        const name = n.name.toLowerCase();
+        const inc = include.length === 0 || include.some((k) => name.includes(k.toLowerCase()));
+        const exc = exclude.length > 0 && exclude.some((k) => name.includes(k.toLowerCase()));
+        return inc && !exc;
+      });
+    },
+    [nodes],
+  );
 
   const [customRuntime, setCustomRuntime] = useState(false);
   // Xray has no Clash-style delay API — the "real latency" button would
@@ -1174,29 +1203,62 @@ export function NodesPage() {
           <div className="empty card muted">{t("nodes.poolsEmpty")}</div>
         ) : (
           <div className="card">
-            {pools.map((p) => (
-              <div
-                key={p.id}
-                className="chain-pool-row"
-                style={{ borderBottom: "1px solid var(--border)", cursor: "pointer" }}
-                onClick={() => setPoolEditor({ pool: p })}
-              >
-                <span className="chain-pool-name">
-                  <span className="chain-pool-glyph" aria-hidden="true">⊞</span>
-                  {p.name}
-                </span>
-                <span className="chain-row-meta">
-                  {p.strategy === "select" ? t("chain.strategySelect")
-                    : p.strategy === "url-test" ? t("chain.strategyUrlTest")
-                    : p.strategy === "fallback" ? t("chain.strategyFallback")
-                    : p.strategy === "load-balance" ? t("chain.strategyLoadBalance")
-                    : p.strategy ?? "—"}
-                </span>
-                <span className={`pill ${p.mode.mode === "explicit" ? "target-node" : "target-smart"}`}>
-                  {p.mode.mode === "explicit" ? t("chain.poolModeExplicit") : t("chain.poolModeKeyword")}
-                </span>
+            {pools.map((p) => {
+            const expanded = poolExpanded.has(p.id);
+            const members = poolMembers(p);
+            const memberCount = p.mode.mode === "explicit"
+              ? p.mode.node_ids.length
+              : members.length;
+            return (
+              <div key={p.id} className="chain-pool-row" style={{ borderBottom: "1px solid var(--border)" }}>
+                <div
+                  className="chain-pool-drawer-head"
+                  onClick={() => togglePoolExpand(p.id)}
+                >
+                  <span className="chain-pool-drawer-arrow">{expanded ? "▼" : "▶"}</span>
+                  <span className="chain-pool-name">
+                    <span className="chain-pool-glyph" aria-hidden="true">⊞</span>
+                    {p.name}
+                  </span>
+                  <span className="chain-row-meta">
+                    {p.strategy === "select" ? t("chain.strategySelect")
+                      : p.strategy === "url-test" ? t("chain.strategyUrlTest")
+                      : p.strategy === "fallback" ? t("chain.strategyFallback")
+                      : p.strategy === "load-balance" ? t("chain.strategyLoadBalance")
+                      : p.strategy ?? "—"}
+                  </span>
+                  <span className={`pill ${p.mode.mode === "explicit" ? "target-node" : "target-smart"}`}>
+                    {p.mode.mode === "explicit" ? t("chain.poolModeExplicit") : t("chain.poolModeKeyword")}
+                  </span>
+                  <span className="chain-row-meta">{memberCount} {t("chain.poolMembersSuffix")}</span>
+                  <GlassButton onClick={(e) => { e.stopPropagation(); setPoolEditor({ pool: p }); }}>
+                    {t("common.edit")}
+                  </GlassButton>
+                </div>
+                {expanded && (
+                  <div className="chain-pool-drawer-body">
+                    {members.length === 0 ? (
+                      <div className="muted" style={{ padding: 8, fontSize: 12 }}>{t("chain.noPoolMembers")}</div>
+                    ) : (
+                      <div className="node-list" style={{ margin: 0 }}>
+                        {members.map((n) => (
+                          <div key={n.id} className="node-list-row" style={{ padding: "4px 12px", fontSize: 13 }}>
+                            <span className="node-list-name">{n.name}</span>
+                            <span className="node-list-proto">{n.protocol ?? "—"}</span>
+                            <span className="node-list-host">{n.server ?? "—"}</span>
+                            <span className="node-list-port">{n.port ?? "—"}</span>
+                            <span className="node-list-lat">
+                              {n.latency_ms != null ? `${n.latency_ms}ms` : "—"}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            ))}
+            );
+          })}
           </div>
         )
       ) : loading ? (
