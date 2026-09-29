@@ -594,7 +594,7 @@ export function PoolEditorModal({
 
   return (
     <div className="modal-backdrop">
-      <div className="modal rules-form-modal">
+      <div className="modal rules-form-modal pool-editor-modal">
         <header className="modal-header">
           <h2>{pool ? t("chain.editPool") : t("chain.newPool")}</h2>
           <button type="button" className="icon-btn" onClick={onClose}>
@@ -738,15 +738,16 @@ export function PoolEditorModal({
               ) : (
                 <div className="chain-pool-manual-pick">
                   {poolMemberNodes.map((n) => (
-                    <label key={n.id} className="chain-pool-manual-item">
-                      <input
-                        type="radio"
-                        name="pool-default-node"
-                        checked={defaultNode === n.id}
-                        onChange={() => setDefaultNode(n.id)}
-                      />
+                    <div
+                      key={n.id}
+                      className={`chain-pool-manual-item${defaultNode === n.id ? " active" : ""}`}
+                      onClick={() => setDefaultNode(n.id)}
+                    >
+                      <span className="chain-pool-manual-indicator">
+                        {defaultNode === n.id ? "●" : "○"}
+                      </span>
                       <span>{n.name}</span>
-                    </label>
+                    </div>
                   ))}
                 </div>
               )}

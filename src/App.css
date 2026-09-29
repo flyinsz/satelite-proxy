@@ -5389,6 +5389,44 @@ tr.dns-diag-tr:hover {
   height: min(600px, 92vh);
 }
 
+/* Pool editor: taller body so the strategy selector is visible without
+   scrolling. */
+.modal.rules-form-modal.pool-editor-modal {
+  max-height: min(95vh, 960px);
+}
+.modal.rules-form-modal.pool-editor-modal .modal-body {
+  flex: 1;
+  min-height: 0;
+}
+
+/* Manual-select pool member picker — clickable rows. */
+.chain-pool-manual-pick {
+  max-height: 200px;
+  overflow-y: auto;
+  border: 1px solid var(--border, #ddd);
+  border-radius: 6px;
+}
+.chain-pool-manual-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.chain-pool-manual-item:hover {
+  background: var(--hover-wash, rgba(0,0,0,0.04));
+}
+.chain-pool-manual-item.active {
+  background: var(--accent-wash, rgba(0,120,255,0.08));
+  font-weight: 500;
+}
+.chain-pool-manual-indicator {
+  width: 16px;
+  text-align: center;
+  font-size: 11px;
+}
+
 /* Field rows: main input flexes, the side field (DNS seg / auto-update seg)
    hugs its own content so the segmented control keeps its natural width. */
 .edit-set-field-row {
