@@ -1349,23 +1349,20 @@ export function NodesPage() {
                         {isCurrentPool ? <span style={{ marginRight: 4 }}>●</span> : null}
                         {p.name}
                       </span>
-                      <span className="muted" style={{ fontSize: 12 }}>
+                      <span className="pool-strategy">
                         {p.strategy === "select" ? t("chain.strategySelect")
                           : p.strategy === "url_test" ? t("chain.strategyUrlTest")
                           : p.strategy === "fallback" ? t("chain.strategyFallback")
                           : p.strategy === "load_balance" ? t("chain.strategyLoadBalance")
                           : p.strategy ?? "—"}
                       </span>
-                      <span className={`pill ${p.mode.mode === "explicit" ? "target-node" : "target-smart"}`}>
-                        {p.mode.mode === "explicit" ? t("chain.poolModeExplicit") : t("chain.poolModeKeyword")}
-                      </span>
                       <span className="node-group-count mono">
                         {p.mode.mode === "explicit" ? p.mode.node_ids.length : members.length}
                       </span>
+                      <span style={{ flex: 1 }} />
                       <span className="pool-latency mono" title={t("nodes.poolMinLatencyHint")}>
                         {poolTesting ? "…" : poolMinLatency != null ? `${poolMinLatency}ms` : "—"}
                       </span>
-                      <span style={{ flex: 1 }} />
                       <RowMenu
                         id={`pool-${p.id}`}
                         openId={openMenuId}
