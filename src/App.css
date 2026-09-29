@@ -2397,7 +2397,8 @@ button {
   border-radius: var(--radius);
   background: color-mix(in srgb, var(--muted) 10%, transparent);
   color: var(--muted);
-  font-size: 0.72rem;
+  font-size: 0.62rem;
+  font-weight: 400;
   flex-shrink: 0;
 }
 
