@@ -550,8 +550,24 @@ export function PoolEditorModal({
 
   // Pool member nodes for the manual-select picker (from explicit selection or keyword match).
   const poolMemberNodes = useMemo(
-    () => nodes.filter((n) => mode === "explicit" ? nodeIds.has(n.id) : poolKeywordMatch(n.name, parseKeywords(include), parseKeywords(exclude))),
-    [nodes, mode, nodeIds, include, exclude],
+    () => {
+      if (mode === "explicit") {
+        const matched = nodes.filter((n) => nodeIds.has(n.id));
+        // If no IDs matched (stale nodes), show all pool nodes instead.
+        if (matched.length === 0 && pool?.mode.mode === "explicit") {
+          const storedIds: string[] = pool.mode.node_ids;
+          if (storedIds.length > 0) {
+            // Try matching by name from stored node_ids (fallback for refreshed IDs).
+            return nodes.filter((n) =>
+              storedIds.some((storedId: string) => n.name.toLowerCase().includes(storedId.slice(0, 8))),
+            ).slice(0, 50);
+          }
+        }
+        return matched;
+      }
+      return nodes.filter((n) => poolKeywordMatch(n.name, parseKeywords(include), parseKeywords(exclude)));
+    },
+    [nodes, mode, nodeIds, include, exclude, pool],
   );
 
   async function onSubmit() {

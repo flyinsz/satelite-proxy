@@ -1231,27 +1231,40 @@ export function NodesPage() {
                     {p.mode.mode === "explicit" ? t("chain.poolModeExplicit") : t("chain.poolModeKeyword")}
                   </span>
                   <span className="chain-row-meta">{memberCount} {t("chain.poolMembersSuffix")}</span>
-                  <GlassButton onClick={(e) => { e.stopPropagation(); setPoolEditor({ pool: p }); }}>
-                    {t("common.edit")}
-                  </GlassButton>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    onClick={(e) => { e.stopPropagation(); setPoolEditor({ pool: p }); }}
+                    title={t("common.edit")}
+                    aria-label={t("common.edit")}
+                  >✎</button>
                 </div>
                 {expanded && (
                   <div className="chain-pool-drawer-body">
                     {members.length === 0 ? (
                       <div className="muted" style={{ padding: 8, fontSize: 12 }}>{t("chain.noPoolMembers")}</div>
                     ) : (
-                      <div className="node-list" style={{ margin: 0 }}>
-                        {members.map((n) => (
-                          <div key={n.id} className="node-list-row" style={{ padding: "4px 12px", fontSize: 13 }}>
-                            <span className="node-list-name">{n.name}</span>
-                            <span className="node-list-proto">{n.protocol ?? "—"}</span>
-                            <span className="node-list-host">{n.server ?? "—"}</span>
-                            <span className="node-list-port">{n.port ?? "—"}</span>
-                            <span className="node-list-lat">
-                              {n.latency_ms != null ? `${n.latency_ms}ms` : "—"}
-                            </span>
+                      <div className="card" style={{ margin: 0, borderTop: "1px solid var(--border)" }}>
+                        <div className="node-list" style={{ gridTemplateColumns: NODE_LIST_COLS }}>
+                          <div className="node-list-head" style={{ gridTemplateColumns: NODE_LIST_COLS }}>
+                            <span></span>
+                            <span>{t("nodes.sortName")}</span>
+                            <span>proto</span>
+                            <span>host</span>
+                            <span>port</span>
+                            <span>{t("nodes.sortLatency")}</span>
                           </div>
-                        ))}
+                          {members.map((n) => (
+                            <div key={n.id} className="node-list-row" style={{ gridTemplateColumns: NODE_LIST_COLS }}>
+                              <span></span>
+                              <span>{n.name}</span>
+                              <span>{n.protocol ?? "—"}</span>
+                              <span>{n.server ?? "—"}</span>
+                              <span>{n.port ?? "—"}</span>
+                              <span>{n.latency_ms != null ? `${n.latency_ms}ms` : "—"}</span>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>
