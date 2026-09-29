@@ -176,15 +176,19 @@ export function NodesPage() {
         next.delete(id);
       } else {
         next.add(id);
-        // On expand, resolve the pool's currently effective node so it can
-        // be highlighted inside the member list.
-        getPoolActiveNode(id)
-          .then((nodeId) => setPoolActiveNode((prev) => ({ ...prev, [id]: nodeId })))
-          .catch(() => setPoolActiveNode((prev) => ({ ...prev, [id]: null })));
+        // On expand, resolve the CURRENT pool's effective node so it can be
+        // highlighted inside the member list. Only the pool actually in use
+        // (current_node_id) gets a live "now" highlight — other pools just
+        // show their members without a forced selection marker.
+        if (id === currentId) {
+          getPoolActiveNode(id)
+            .then((nodeId) => setPoolActiveNode((prev) => ({ ...prev, [id]: nodeId })))
+            .catch(() => setPoolActiveNode((prev) => ({ ...prev, [id]: null })));
+        }
       }
       return next;
     });
-  }, []);
+  }, [currentId]);
 
   // Resolve pool member nodes for the drawer view.
   const poolMembers = useCallback(
@@ -563,6 +567,8 @@ export function NodesPage() {
       await setCurrentNode(id);
       setCurrentId(id);
       setAutoSelect("off");
+      // Picking a plain node clears any pool "now" highlight.
+      setPoolActiveNode({});
       // Running: Clash API hot-switch — UI selection is enough feedback.
       // Stopped: write active.json so next start uses the new node.
       const status = await getProxyStatus().catch(() => null);
@@ -601,7 +607,8 @@ export function NodesPage() {
       }
       // Refresh this pool's effective node highlight after switching.
       const activeNodeId = await getPoolActiveNode(poolId).catch(() => null);
-      setPoolActiveNode((prev) => ({ ...prev, [poolId]: activeNodeId }));
+      // Only the newly-selected pool keeps a live highlight.
+      setPoolActiveNode({ [poolId]: activeNodeId });
     } catch (e) {
       setError(typeof e === "string" ? e : String(e));
     } finally {
@@ -1277,7 +1284,7 @@ export function NodesPage() {
                 const expanded = poolExpanded.has(p.id);
                 const members = poolMembers(p);
                 const isCurrentPool = p.id === currentId;
-                const activeMember = poolActiveNode[p.id] ?? null;
+                const activeMember = isCurrentPool ? (poolActiveNode[p.id] ?? null) : null;
                 return (
                   <div key={p.id}>
                     <div

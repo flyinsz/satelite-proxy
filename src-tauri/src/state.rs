@@ -847,12 +847,13 @@ impl AppState {
         if store.settings.runtime_source().is_custom() {
             return None;
         }
-        store
-            .settings
-            .current_node_id
-            .as_deref()
-            .and_then(|id| store.find_node(id))
-            .map(|n| n.name.clone())
+        let id = store.settings.current_node_id.as_deref()?;
+        // A pool id shows the pool's name (the main group routes into the
+        // pool's own selector/urltest outbound, so there's no single node).
+        if let Some(pool) = store.pools.iter().find(|p| p.id == id) {
+            return Some(pool.name.clone());
+        }
+        store.find_node(id).map(|n| n.name.clone())
     }
 
     fn begin_core_transition(&self) -> AppResult<CoreTransitionGuard<'_>> {
