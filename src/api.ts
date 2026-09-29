@@ -1120,6 +1120,11 @@ export function selectPool(poolId: string) {
   return invoke<ProxyStatus>("select_pool", { poolId });
 }
 
+/** Resolve the pool's currently effective node id (pool group `now`). */
+export function getPoolActiveNode(poolId: string) {
+  return invoke<string | null>("get_pool_active_node", { poolId });
+}
+
 export function listChains() {
   return invoke<ProxyChain[]>("list_chains");
 }

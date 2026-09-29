@@ -4,7 +4,7 @@
 
 use crate::domain::{ChainHop, NodePool, PoolMode, PoolStrategy, ProxyChain};
 use crate::state::AppState;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 /// Queue one globally debounced restart — mirrors `rules.rs::apply_running`.
 /// Pool/chain edits change the generated outbounds the same way rule edits
@@ -18,6 +18,56 @@ pub fn list_pools(state: State<'_, AppState>) -> Result<Vec<NodePool>, String> {
     state
         .with_store(|store| Ok(store.pools.clone()))
         .map_err(|e| e.to_string())
+}
+
+/// Resolve a pool's currently effective node id (the pool group's `now` via
+/// Clash API). Returns `None` when the kernel isn't running / has no API, or
+/// when the pool's current pick isn't one of our nodes (e.g. `direct`).
+#[tauri::command]
+pub async fn get_pool_active_node(
+    app: AppHandle,
+    pool_id: String,
+) -> Result<Option<String>, String> {
+    let worker_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app
+            .try_state::<AppState>()
+            .ok_or_else(|| "app state unavailable".to_string())?;
+        let (pool_tag, node_ids) = state
+            .with_store(|store| {
+                let pool = store
+                    .pools
+                    .iter()
+                    .find(|p| p.id == pool_id)
+                    .ok_or_else(|| crate::error::AppError::NotFound(pool_id.clone()))?;
+                let ids: Vec<String> = store.nodes.iter().map(|n| n.node.id.clone()).collect();
+                Ok((pool.outbound_tag(), ids))
+            })
+            .map_err(|e| e.to_string())?;
+        let api = {
+            let runtime = state.lock_runtime();
+            runtime.clash_api_clone()
+        };
+        let Some(api) = api else {
+            return Ok(None);
+        };
+        let Some(now_tag) = api
+            .proxy_group_now_with_timeout(&pool_tag, std::time::Duration::from_millis(1500))
+            .map_err(|e| e.to_string())?
+        else {
+            return Ok(None);
+        };
+        // `node-<id[..16]>` → node id; match by prefix against stored ids.
+        if let Some(rest) = now_tag.strip_prefix("node-") {
+            let matched = node_ids
+                .into_iter()
+                .find(|id| id.starts_with(rest));
+            return Ok(matched);
+        }
+        Ok(None)
+    })
+    .await
+    .map_err(|e| format!("pool active node task: {e}"))?
 }
 
 #[tauri::command(async)]

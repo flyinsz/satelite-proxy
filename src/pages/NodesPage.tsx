@@ -16,6 +16,7 @@ import {
   toggleFavoriteNode,
   selectPool,
   deletePool,
+  getPoolActiveNode,
 } from "../api";
 import { GlassButton } from "../components/GlassButton";
 import { GlassSwitch } from "../components/GlassSwitch";
@@ -165,12 +166,22 @@ export function NodesPage() {
   const [poolEditor, setPoolEditor] = useState<{ pool: NodePool } | null>(null);
   const [poolExpanded, setPoolExpanded] = useState<Set<string>>(new Set());
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  // poolId → currently-effective node id inside that pool (its group `now`).
+  const [poolActiveNode, setPoolActiveNode] = useState<Record<string, string | null>>({});
 
   const togglePoolExpand = useCallback((id: string) => {
     setPoolExpanded((cur) => {
       const next = new Set(cur);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        // On expand, resolve the pool's currently effective node so it can
+        // be highlighted inside the member list.
+        getPoolActiveNode(id)
+          .then((nodeId) => setPoolActiveNode((prev) => ({ ...prev, [id]: nodeId })))
+          .catch(() => setPoolActiveNode((prev) => ({ ...prev, [id]: null })));
+      }
       return next;
     });
   }, []);
@@ -588,6 +599,9 @@ export function NodesPage() {
         setSwitching(true);
         await waitForCoreRestart();
       }
+      // Refresh this pool's effective node highlight after switching.
+      const activeNodeId = await getPoolActiveNode(poolId).catch(() => null);
+      setPoolActiveNode((prev) => ({ ...prev, [poolId]: activeNodeId }));
     } catch (e) {
       setError(typeof e === "string" ? e : String(e));
     } finally {
@@ -1031,8 +1045,8 @@ export function NodesPage() {
                 );
   }
 
-  function renderNodeCard(n: ProxyNode) {
-              const active = n.id === currentId;
+  function renderNodeCard(n: ProxyNode, activeOverride: string | null = null) {
+              const active = n.id === currentId || n.id === activeOverride;
               const isTesting = testingIds.has(n.id);
               const disabled = customRuntime || busyId === n.id;
               return (
@@ -1263,6 +1277,7 @@ export function NodesPage() {
                 const expanded = poolExpanded.has(p.id);
                 const members = poolMembers(p);
                 const isCurrentPool = p.id === currentId;
+                const activeMember = poolActiveNode[p.id] ?? null;
                 return (
                   <div key={p.id}>
                     <div
@@ -1314,13 +1329,13 @@ export function NodesPage() {
                         </div>
                       ) : viewMode === "grid" ? (
                         <div className="node-grid node-grid-pools">
-                          {members.map((n) => renderNodeCard(n))}
+                          {members.map((n) => renderNodeCard(n, activeMember))}
                         </div>
                       ) : (
                         members.map((n) => (
                           <div
                             key={n.id}
-                            className={`node-list-row${n.id === currentId ? " row-active" : ""}`}
+                            className={`node-list-row${n.id === currentId || n.id === activeMember ? " row-active" : ""}`}
                             style={{ gridTemplateColumns: NODE_LIST_COLS }}
                             {...nodeTip(n, t)}
                           >

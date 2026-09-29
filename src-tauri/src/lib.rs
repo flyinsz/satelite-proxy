@@ -530,6 +530,7 @@ pub fn run() {
             commands::remove_rule,
             commands::set_rule_enabled,
             commands::list_pools,
+            commands::get_pool_active_node,
             commands::create_pool,
             commands::update_pool,
             commands::delete_pool,
