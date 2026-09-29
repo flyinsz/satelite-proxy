@@ -144,6 +144,46 @@ scripts/memory-profile/                           # WebView2 内存剖析（CDP 
   唯独 `src-tauri/resources/geodata/mihomo/`（country.mmdb + geosite.dat 快照）**入 git**，不在排除列表内
 - 图标生成（三个脚本，均依赖 Pillow，互不触碰对方产物）：`scripts/generate-app-icons.py` 只做应用图标——重采样源图 `assets/icon/ic_launcher-web.png`（**2026-09-23 换代为「冰蓝发光笑脸土星」= icon-frost**：源稿=用户提供的 1254px 纯黑底 RGB（原 `src-tauri/icons/new.png`，存档 `icon-frost/original-1254-blackbg.png`），经鲁棒圆角矩形拟合提取——比霓虹稿简单：辉光无瓦片外溢，直边 L122/R1132/T122/B1121、共享角半径 ~274，配方见 `icon-frost/README.md`；此前的土星环版（ec487bd/v1.0.38 稿）已归档 `icon-saturn/`，霓虹稿的 1254px 纯黑底提取配方在 `icon-neon/README.md`）。换新源图时按「圆角已内建在源图 alpha、内容占画布 ~86% 居中」格式对齐；该目录其余文件为 Interstellar 安卓素材、.gitignore 排除）出 icon.png/.ico/.icns/Square* 全套。**ico 小尺寸条目专项调优（2026-09-23）**：`write_ico` 的 ≤48px 条目单步 LANCZOS 直降 + 仅 RGB 走 unsharp（≤32px 1.4/100 再叠加 gamma 0.88 中间调提亮，48px 1.2/80，alpha 不动保圆角 AA）——按暗调霓虹稿标定（暗瓦片+暗星球+软辉光，纯重采样在 16–24px 糊成一团）；土星环回退后沿用、icon-frost 换代继续沿用并目检复核（更亮稿上表现为对比更利落、16–24px 土星轮廓可辨，无过曝/振铃）。且 ico 必须含 **20/28px 档**（125%/175% DPI 点名要这两档，缺了 Windows 会拉伸邻近档显示、更显糊——`icon-saturn/` 归档的旧 ico 即只有 16/24/32/48/64/128/256 七档）。历史图标归档五处、回退=产物拷回 `src-tauri/icons/`、源图拷回 `assets/icon/` 覆盖后重跑两生成脚本（**2026-09-23 frost 换代时托盘一度不联动，2026-09-24 起恢复**——用户要求用 frost 重做 saturn 托盘组以消除与 saturn_classic 的同图重复，故换稿/回退需连带重跑托盘脚本，跑完务必按文末「坑」恢复 4 个手工图标；titlebar-* 标题栏图标保持 badge 式、不随应用图标联动）：`icon-frost/`（冰蓝发光笑脸土星版，2026-09-23，**当前生效**，含 1254px 黑底原始稿）、`icon-neon/`（霓虹笑脸土星版，2026-09-22）、`icon-facenew/`（笑脸土星版，v1.0.40）、`icon-saturn/`（土星环版，v1.0.38）、`icon-legacy/`（v1.0.37 及之前旧版）。**icns 走手调源图 `make_mac_icon`**（2726961：payload 直接取自手工调校的 `assets/icon/ic_launcher-mac.png`，只缩放、不裁剪/不归一化/不垫底/不套遮罩——瓦片 ~94%、圆角手调，同时照顾 macOS ≤15（icns 位图原样显示）与 26 Tahoe（系统 squircle 重遮罩 + 给透明边距垫浅色底板）；更早的程序化满幅推导「放大 96% + 垫不透明深底 + 自身 15% 圆角」即被其取代）。**Windows 产物（ico/Square*/StoreLogo）自 2026-09-24 晚起改走 mac 源图 as-is**（用户点名「用 ic_launcher-mac.png 重做 Windows 应用图标、标题栏不动」：`_ico_entry` 基底与 Square*/Store 改用 `mac_icon_1024`/`make_mac_icon`——瓦片 ~94%、手调圆角、无辉光环，与 macOS 观感一致；≤48px 锐化/gamma 与 20/28px 档保留；已知取舍=深色任务栏小尺寸下瓦片轮廓较弱、主要靠行星发光体辨认）。**瓦片归一化 ~96% + 柔和外辉光管线（`tile_icon_1024`，2026-09-24 上午上线修复任务栏显小）现仅产 Linux PNG**（icon.png/32x32/128x128@2x：源图瓦片 bbox 放大到 `TILE_ART_SCALE=0.96`、保留自身圆角与透明角，沿轮廓叠 `TILE_HALO_WIDTH=3%` 辉光环——blur−腐蚀 alpha 环形、色取 `_glow_tint` 画作最亮像素均值=冰蓝白）；源图本身保持 86% 边距惯例，本次切换 Linux PNG 像素级不变。**Windows 任务栏图标缓存粘滞**：重编后旧图标可能滞留，需取消固定重固定或刷新图标缓存。**mac 式满幅变体（深色垫底 + 自身 15% 遮罩）在 Windows 上试过并被否（2026-09-22 用户决策）**：源图瓦片自带 ~25% 大圆角，与满幅自身 15% 圆角不重合、角部露出深色垫底、观感「被切成方的」——勿再给 Windows/Linux 产物垫底或套额外遮罩，放大瓦片本体即可。icns 为纯 Python 写入、无需 macOS iconutil，Windows 上也能全量再生成；`scripts/generate-windows-app-icon.py` 只做 **Windows 平台应用图标**（2026-09-23，用户指定 win0 稿）：仅产 `icon.ico`（exe/安装包/任务栏，经 tauri-build 嵌入资源 id 32512）+ `Square*Logo/StoreLogo`（msi 本地打包用），**不写** icon.png/icns/32x32/128x128 等跨平台产物、也**不碰 tray/**（标题栏图标 titlebar-* 归托盘脚本与 `window_icon.rs`，与本脚本无关）——源图默认 `src-tauri/icons/win0.png`（512px RGBA 霓虹笑脸土星候选稿，圆角瓦片透明边距已内建，但自带**向右下偏移的纯黑软投影** alpha≤66），管线=按 alpha≥200 取瓦片硬边 bbox **裁掉黑影**（浅色壁纸/任务栏上成黑晕、16–24px 糊边）+1px AA 余量 → 归方、原生分辨率居中 86% → ico 配方与主脚本 2026-09-23 调优同款（20/28px 档、≤48px 单步 LANCZOS + RGB unsharp、≤32px 叠 gamma 0.88）；换源图传 argv[1]（win0-2 候选稿已于 2026-09-23 晚 icon-frost 换代时删除——脚本保留、源图需自备，1254px 黑底 RGB 稿先按 `icon-neon/README.md` 配方提取）；**非当前生效管线**（已被主脚本 2026-09-24 的 mac-as-is 管线进一步取代——运行它会把 ico 打回 86% 旧观感，勿再跑）。`scripts/generate-tray-icons.py` 只做托盘图标（badge/saturn/mark/ghost/buddy 脚本生成；danger*/ghost2/faceid/**saturn_classic** 为手工产物不在脚本内——saturn_classic=霓虹化之前的 facenew 土星（v1.0.40，自 git 历史恢复），2026-09-23 应用户要求与新版并存；saturn 组=应用图标同款土星瓦片（**2026-09-24 起重新随应用图标联动=icon-frost 版**，用户要求用新图标重做托盘消除与 saturn_classic 的重复；off 去色/on 原色）；脚本另产 `tray/titlebar-<16..48>.png` 各尺寸 badge——`window_icon.rs` 内嵌作 Windows 标题栏图标）。**坑：托盘脚本会覆盖 4 个带手工后处理的图标**（`tray/buddy-off|buddy-on|ghost-on|mark-on.png`，ed99be6 的辉光/补白修复只提交了 PNG、未回写脚本），跑完务必 `git checkout HEAD -- src-tauri/icons/tray/{buddy-off,buddy-on,ghost-on,mark-on}.png` 恢复
 
+## 1.5 二开说明（fork 增量，与上游合并相关｜2026-09-29 新增）
+
+本仓库是 [`zn0wii/satelite-proxy`](https://github.com/zn0wii/satelite-proxy) 的二开（remote `upstream`），fork 仓库为 `flyinsz/satelite-proxy`（remote `origin`）。本节的唯一目的：**让上游 release 合入本仓库时冲突面尽量小**。
+
+### 1.5.1 版本号策略：`v1.0.45-N`
+
+- `package.json` 的 `version` 写**上游版本 + 二开序号**，如 `1.0.45-1`；对应 tag `v1.0.45-1`。
+- 上游升到 `1.0.46` 时，本仓库发 `1.0.46-1`，序号从 1 重新起算；同一上游版本内的多次二开发版递增为 `-2`、`-3`。
+- **`.github/workflows/release.yml` 有硬校验**：tag 去掉 `v` 后必须与 `package.json` 的 `version` 完全相等，否则 CI 直接 fail。改版本时两处必须同改。
+- 三端打包兼容性（已实测）：macOS 产物 `CFBundleShortVersionString` 原样写入 `1.0.45-1`；Windows NSIS 的升级判定用完整 semver（`installer.nsi` 的 `SemverCompare`，**不是** `VIProductVersion`），且 `allowDowngrades` 默认 `true`，故预发布标识不会造成降级误判；Linux AppImage 不受影响。
+- 注意：`src-tauri/Cargo.toml` 的 `package.version`（`1.0.4`）与打包版本无关（`tauri.conf.json` 的 `version` 指向 `../package.json`），**不要**顺手改它。
+- 本仓库二开无应用内更新检查逻辑，改版本号无副作用。
+
+### 1.5.2 低侵入原则
+
+改动优先沉淀在**独立新文件**，上游文件只留最薄的挂载点：
+
+| 二开功能 | 独立文件 | 上游文件的挂载点 |
+|---|---|---|
+| 节点池视图 | `src/pages/PoolsView.tsx` | `NodesPage.tsx` 内一行 `<PoolsView …/>` |
+| 布局共享常量 | `src/nodeLayout.ts` | `NodesPage.tsx` / `PoolsView.tsx` 各一处 import |
+
+- `NodesPage.tsx` 对上游的增量已由 +286/−14 收敛到 +63/−20；后续再动节点池，**一律改 `PoolsView.tsx`**，不要再往 `NodesPage.tsx` 里加。
+- `RowMenu` / `PoolEditorModal` 仍留在 `ChainPage.tsx`（上游文件），对上游的增量只有「加 `export`」+ 菜单项内容，属于可接受的薄改动。
+- 后端（Rust）侧同理：池相关命令（`select_pool` / `get_pool_active_node`）走新增文件/新增函数，尽量不改上游函数体。
+
+### 1.5.3 合入上游的 SOP
+
+```sh
+git fetch upstream
+git checkout -b merge-upstream-<版本> upstream/main   # 或直接 merge 到 main
+git checkout main && git merge upstream/main
+# 冲突热点：NodesPage.tsx（挂载点）、ChainPage.tsx（export）、messages.ts / App.css（追加块）
+```
+
+- 冲突优先**保留本仓库的二开挂载点**，把上游的新结构接进去，而不是回退上游代码。
+- 合并后跑：`./node_modules/.bin/tsc && ./node_modules/.bin/vite build`，再 `cargo check`。
+- 安全网：`satelite-next` 分支始终指向最近一次可用的二开状态，合并出问题可随时 `git reset --hard satelite-next` 回退。
+- 合并完成后，`package.json` 的 `version` 改为 `<新上游版本>-1`。
+
 ## 2. 项目是什么
 
 **Satelite**（`com.satelite.proxy`）— 轻量级桌面代理客户端，Tauri 2 桌面应用，支持**三内核**。
@@ -164,6 +204,8 @@ satelite-proxy/
 │   ├── types.ts             # ★ 前端共享类型（与 Rust domain 对应，538 行）
 │   ├── App.tsx              # Provider 栈 + ProShell/SimpleShell 切换
 │   ├── pages/               # 专业模式 12 个页面
+│   ├── pages/PoolsView.tsx  # ★ 二开：节点池视图（见 §0.5）
+│   ├── nodeLayout.ts        # ★ 二开：节点列表/池行共享布局常量（见 §0.5）
 │   ├── ui/simple/           # 简洁模式 UI（独立 shell + 4 页）
 │   ├── components/          # 玻璃设计系统 + 3D 首页 + 弹窗表单
 │   ├── hooks/               # useVirtualRange / useVisibleInterval / 拖拽排序等
