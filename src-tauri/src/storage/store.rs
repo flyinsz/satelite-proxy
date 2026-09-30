@@ -151,6 +151,21 @@ fn detect_region(name: &str) -> Option<&'static Region> {
                 best = Some((region, 3, region.id.len()));
             }
         }
+        // `zh` is the region's Chinese name ("日本" → JP). The frontend adds
+        // it to ALIASES as a tier-1 entry, but here it is a separate field, so
+        // it must be matched explicitly — otherwise nodes named "日本-01"
+        // (Chinese name, not a city/alias) fall through to the catch-all while
+        // their region pool still exists. Redundant for HK/TW (whose zh is also
+        // in `aliases`), harmless.
+        if name.contains(region.zh) {
+            let better = match best {
+                None => true,
+                Some((_, bt, blen)) => 1 < bt || (1 == bt && region.zh.len() > blen),
+            };
+            if better {
+                best = Some((region, 1, region.zh.len()));
+            }
+        }
         for alias in region.aliases {
             let is_latin = alias.bytes().all(|b| b.is_ascii_alphanumeric() || b == b' ');
             let (tier, hit) = if !is_latin {
@@ -1927,7 +1942,7 @@ impl AppStore {
         for region in REGIONS {
             let pool_name = region_pool_name(region);
             if seen.contains(region.id) {
-                let mut include = vec![region.id.to_string()];
+                let mut include = vec![region.id.to_string(), region.zh.to_string()];
                 include.extend(region.aliases.iter().map(|s| s.to_string()));
                 if let Some(pool) = self.pools.iter_mut().find(|p| p.name == pool_name) {
                     pool.mode = crate::domain::PoolMode::Keyword {
@@ -1954,6 +1969,7 @@ impl AppStore {
             .iter()
             .flat_map(|r| {
                 std::iter::once(r.id.to_string())
+                    .chain(std::iter::once(r.zh.to_string()))
                     .chain(r.aliases.iter().map(|s| s.to_string()))
             })
             .collect();
@@ -2816,6 +2832,83 @@ mod tests {
             !names.iter().any(|n| *n == OTHER_REGION_POOL_NAME),
             "catch-all should NOT exist when all nodes are alpha-2: {names:?}"
         );
+    }
+
+    #[test]
+    fn sync_region_pools_recognizes_zh_named_nodes() {
+        // Nodes named by the region's Chinese name ("日本-01", "美国-01") must
+        // be assigned to their region, not the catch-all. Regression for the
+        // bug where `detect_region` matched only `aliases` (not the `zh` field),
+        // so "日本-01"-style nodes landed in "其他地区".
+        let mut store = AppStore::default();
+        let sub = crate::domain::Subscription {
+            id: "sub".into(),
+            name: "sub".into(),
+            source: crate::domain::SubscriptionSource::Url {
+                url: "https://example.com/s".into(),
+            },
+            last_update: 1,
+            node_count: 3,
+            enabled: true,
+            format: Some("clash_yaml".into()),
+            skipped_count: 0,
+            via_proxy: false,
+            auto_update: false,
+            auto_update_interval_min: 1440,
+            traffic: None,
+            user_agent: None,
+            rule_providers: Vec::new(),
+            proxy_groups: Vec::new(),
+        };
+        let mk = |id: &str, name: &str| crate::domain::ProxyNode {
+            id: id.into(),
+            name: name.into(),
+            protocol: crate::domain::Protocol::Trojan,
+            server: "x.example.com".into(),
+            port: 443,
+            tls: None,
+            transport: None,
+            udp: Some(false),
+            config: crate::domain::ProtocolConfig::Trojan {
+                password: "p".into(),
+            },
+            source: None,
+            raw: None,
+            latency_ms: None,
+            latency_at: None,
+        };
+        store
+            .upsert_subscription(
+                sub,
+                vec![mk("n1", "日本-01"), mk("n2", "美国-01"), mk("n3", "德国-01")],
+            )
+            .unwrap();
+
+        let names: Vec<&str> = store.pools.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            names.iter().any(|n| *n == "🇯🇵 日本节点"),
+            "JP pool should exist for 日本-01: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| *n == "🇺🇸 美国节点"),
+            "US pool should exist for 美国-01: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| *n == "🇩🇪 德国节点"),
+            "DE pool should exist for 德国-01: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| *n == OTHER_REGION_POOL_NAME),
+            "catch-all should NOT exist when all nodes are zh-named: {names:?}"
+        );
+        // The catch-all's exclude must contain "日本" so a residual zh-named
+        // node is filtered out even if it somehow misses `seen`.
+        let jp = store.pools.iter().find(|p| p.name == "🇯🇵 日本节点").unwrap();
+        if let crate::domain::PoolMode::Keyword { include, .. } = &jp.mode {
+            assert!(include.iter().any(|k| k == "日本"), "JP include should carry 日本: {include:?}");
+        } else {
+            panic!("JP pool should be keyword-mode");
+        }
     }
 
     fn test_store_path(name: &str) -> PathBuf {
