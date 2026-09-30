@@ -23,6 +23,7 @@ import {
 } from "../api";
 import { useI18n } from "../i18n";
 import { nodeTip } from "../nodeTooltip";
+import { GlassButton } from "../components/GlassButton";
 import { waitForCoreRestart } from "../coreBusy";
 import { NODE_GROUP_H, NODE_LIST_COLS } from "../nodeLayout";
 import { PoolEditorModal, RowMenu } from "./ChainPage";
@@ -82,7 +83,7 @@ export function PoolsView({
   const [poolActiveNode, setPoolActiveNode] = useState<Record<string, string | null>>({});
   // poolId set — a latency test for that pool's members is in flight.
   const [poolTestIds, setPoolTestIds] = useState<Set<string>>(new Set());
-  const [poolEditor, setPoolEditor] = useState<{ pool: NodePool } | null>(null);
+  const [poolEditor, setPoolEditor] = useState<{ pool: NodePool | null } | null>(null);
 
   const togglePoolExpand = useCallback(
     (id: string) => {
@@ -136,12 +137,22 @@ export function PoolsView({
         const ids = pool.mode.node_ids;
         return nodes.filter((n) => ids.includes(n.id));
       }
-      // keyword mode
+      // keyword mode — mirror the backend `name_matches_keywords` semantics
+      // (two-letter uppercase = ISO alpha-2 whole-token, else substring).
       const { include, exclude } = pool.mode;
       return nodes.filter((n) => {
         const name = n.name.toLowerCase();
-        const inc = include.length === 0 || include.some((k) => name.includes(k.toLowerCase()));
-        const exc = exclude.length > 0 && exclude.some((k) => name.includes(k.toLowerCase()));
+        const tokens = n.name.split(/[^A-Za-z0-9]/).filter(Boolean).map((t) => t.toLowerCase());
+        const hits = (k: string) => {
+          const kk = k.trim();
+          if (kk.length === 2 && /^[A-Z]{2}$/.test(kk)) {
+            const kl = kk.toLowerCase();
+            return tokens.includes(kl);
+          }
+          return name.includes(kk.toLowerCase());
+        };
+        const inc = include.length === 0 || include.some(hits);
+        const exc = exclude.length > 0 && exclude.some(hits);
         return inc && !exc;
       });
     },
@@ -341,6 +352,12 @@ export function PoolsView({
           </div>
         </div>
       )}
+
+      <div className="pool-create-row">
+        <GlassButton onClick={() => setPoolEditor({ pool: null })}>
+          {t("common.create")}
+        </GlassButton>
+      </div>
 
       {poolEditor && (
         <PoolEditorModal

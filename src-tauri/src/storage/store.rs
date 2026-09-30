@@ -138,6 +138,19 @@ fn detect_region(name: &str) -> Option<&'static Region> {
 
     let mut best: Option<(&'static Region, u8, usize)> = None;
     for region in REGIONS {
+        // Alpha-2 ISO id is the canonical token ("HK-01" → HK), mirroring the
+        // frontend `nodeGroups.ts` ALIASES tier-3 entry. It is not part of
+        // `aliases`, so it has to be matched explicitly — otherwise nodes
+        // named "HK-1", "JP-1", "KR-3" … fall through to the catch-all.
+        if words.iter().any(|w| w == region.id) {
+            let better = match best {
+                None => true,
+                Some((_, bt, blen)) => 3 < bt || (3 == bt && region.id.len() > blen),
+            };
+            if better {
+                best = Some((region, 3, region.id.len()));
+            }
+        }
         for alias in region.aliases {
             let is_latin = alias.bytes().all(|b| b.is_ascii_alphanumeric() || b == b' ');
             let (tier, hit) = if !is_latin {
@@ -1907,14 +1920,25 @@ impl AppStore {
             self.pools.retain(|p| p.name != legacy);
         }
         // Region pools: create when a node exists, drop when the region is empty.
+        // `include` leads with the alpha-2 ISO id so nodes named "HK-1" are
+        // caught by keyword matching; `aliases` cover the rest. Existing pools
+        // are refreshed in place (idempotent) so stores written by builds that
+        // omitted the alpha-2 id self-heal on the next sync.
         for region in REGIONS {
             let pool_name = region_pool_name(region);
             if seen.contains(region.id) {
-                if !self.pools.iter().any(|p| p.name == pool_name) {
+                let mut include = vec![region.id.to_string()];
+                include.extend(region.aliases.iter().map(|s| s.to_string()));
+                if let Some(pool) = self.pools.iter_mut().find(|p| p.name == pool_name) {
+                    pool.mode = crate::domain::PoolMode::Keyword {
+                        include,
+                        exclude: Vec::new(),
+                    };
+                } else {
                     self.pools.push(crate::domain::NodePool::new(
                         &pool_name,
                         crate::domain::PoolMode::Keyword {
-                            include: region.aliases.iter().map(|s| s.to_string()).collect(),
+                            include,
                             exclude: Vec::new(),
                         },
                     ));
@@ -1924,12 +1948,24 @@ impl AppStore {
             }
         }
         // Catch-all "其他节点": present only when some node matches no region.
-        let all_keywords: Vec<String> = REGIONS
+        // Excludes every region's alpha-2 id + aliases so "HK-1"-style nodes
+        // are filtered out instead of dumped into the catch-all.
+        let mut all_keywords: Vec<String> = REGIONS
             .iter()
-            .flat_map(|r| r.aliases.iter().map(|s| s.to_string()))
+            .flat_map(|r| {
+                std::iter::once(r.id.to_string())
+                    .chain(r.aliases.iter().map(|s| s.to_string()))
+            })
             .collect();
+        all_keywords.sort();
+        all_keywords.dedup();
         if other_seen {
-            if !self.pools.iter().any(|p| p.name == OTHER_REGION_POOL_NAME) {
+            if let Some(pool) = self.pools.iter_mut().find(|p| p.name == OTHER_REGION_POOL_NAME) {
+                pool.mode = crate::domain::PoolMode::Keyword {
+                    include: Vec::new(),
+                    exclude: all_keywords,
+                };
+            } else {
                 self.pools.push(crate::domain::NodePool::new(
                     OTHER_REGION_POOL_NAME,
                     crate::domain::PoolMode::Keyword {
@@ -2710,6 +2746,75 @@ mod tests {
         assert!(
             names.iter().any(|n| *n == "🇩🇪 德国节点"),
             "DE pool should remain: {names:?}"
+        );
+    }
+
+    #[test]
+    fn sync_region_pools_recognizes_alpha2_named_nodes() {
+        // Nodes named by ISO alpha-2 code ("HK-1", "JP-1") must be assigned to
+        // their region, not dumped into the catch-all. Regression for the bug
+        // where `detect_region` matched only `aliases` (no alpha-2 id), so such
+        // nodes landed in "其他地区" while their region pool still existed.
+        let mut store = AppStore::default();
+        let sub = crate::domain::Subscription {
+            id: "sub".into(),
+            name: "sub".into(),
+            source: crate::domain::SubscriptionSource::Url {
+                url: "https://example.com/s".into(),
+            },
+            last_update: 1,
+            node_count: 2,
+            enabled: true,
+            format: Some("clash_yaml".into()),
+            skipped_count: 0,
+            via_proxy: false,
+            auto_update: false,
+            auto_update_interval_min: 1440,
+            traffic: None,
+            user_agent: None,
+            rule_providers: Vec::new(),
+            proxy_groups: Vec::new(),
+        };
+        let mk = |id: &str, name: &str| crate::domain::ProxyNode {
+            id: id.into(),
+            name: name.into(),
+            protocol: crate::domain::Protocol::Trojan,
+            server: "x.example.com".into(),
+            port: 443,
+            tls: None,
+            transport: None,
+            udp: Some(false),
+            config: crate::domain::ProtocolConfig::Trojan {
+                password: "p".into(),
+            },
+            source: None,
+            raw: None,
+            latency_ms: None,
+            latency_at: None,
+        };
+        store
+            .upsert_subscription(
+                sub,
+                vec![mk("n1", "HK-1"), mk("n2", "JP-1"), mk("n3", "KR-3")],
+            )
+            .unwrap();
+
+        let names: Vec<&str> = store.pools.iter().map(|p| p.name.as_str()).collect();
+        assert!(
+            names.iter().any(|n| *n == "🇭🇰 香港节点"),
+            "HK pool should exist for HK-1: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| *n == "🇯🇵 日本节点"),
+            "JP pool should exist for JP-1: {names:?}"
+        );
+        assert!(
+            names.iter().any(|n| *n == "🇰🇷 韩国节点"),
+            "KR pool should exist for KR-3: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| *n == OTHER_REGION_POOL_NAME),
+            "catch-all should NOT exist when all nodes are alpha-2: {names:?}"
         );
     }
 

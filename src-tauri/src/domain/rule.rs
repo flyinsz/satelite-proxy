@@ -205,8 +205,18 @@ impl Rule {
 /// Whitelist (`include`): empty = allow all; otherwise name must contain **any** keyword (OR).
 /// Blacklist (`exclude`): name must contain **none** of the keywords (any hit skips).
 /// Matching is case-insensitive substring on the display name.
+///
+/// A keyword of exactly two ASCII uppercase letters is an ISO alpha-2 code
+/// ("HK", "US", …) and is matched as a **whole token** instead of a substring:
+/// "HK" hits "HK-01" but not "think", and "US" hits "US-01" but not "trust".
 pub fn name_matches_keywords(node_name: &str, include: &[String], exclude: &[String]) -> bool {
     let name = node_name.to_lowercase();
+    // Alpha-2 token matching shares the tokenizer with `detect_region`.
+    let tokens: Vec<String> = node_name
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase())
+        .collect();
 
     // Blacklist first: any hit → skip
     for k in exclude {
@@ -214,7 +224,7 @@ pub fn name_matches_keywords(node_name: &str, include: &[String], exclude: &[Str
         if k.is_empty() {
             continue;
         }
-        if name.contains(&k.to_lowercase()) {
+        if keyword_hits(&name, &tokens, k) {
             return false;
         }
     }
@@ -230,7 +240,18 @@ pub fn name_matches_keywords(node_name: &str, include: &[String], exclude: &[Str
     // Whitelist: any keyword match → allow
     include_keys
         .into_iter()
-        .any(|k| name.contains(&k.to_lowercase()))
+        .any(|k| keyword_hits(&name, &tokens, k))
+}
+
+/// Match a single keyword against a node name. Two-letter uppercase keywords
+/// are ISO alpha-2 codes → whole-token match; everything else → substring.
+fn keyword_hits(name_lower: &str, tokens: &[String], keyword: &str) -> bool {
+    if keyword.len() == 2 && keyword.bytes().all(|b| b.is_ascii_uppercase()) {
+        let k = keyword.to_lowercase();
+        tokens.iter().any(|t| t == &k)
+    } else {
+        name_lower.contains(&keyword.to_lowercase())
+    }
 }
 
 /// Keywords that appear in both include and exclude (case-insensitive). Empty if no conflict.
@@ -918,6 +939,24 @@ mod tests {
         assert!(name_matches_keywords("任意节点", &[], &exc));
         assert!(!name_matches_keywords("HK 香港专线", &[], &exc));
         assert!(!name_matches_keywords("台湾专线", &[], &exc));
+    }
+
+    #[test]
+    fn smart_keywords_alpha2_matches_as_whole_token() {
+        // Two-letter uppercase keywords are ISO alpha-2 codes and must match
+        // only as standalone tokens, not as substrings — "US" hits "US-01" but
+        // not "trust"/"custom", and "HK" hits "HK-01" but not "think".
+        let inc = vec!["HK".into()];
+        assert!(name_matches_keywords("HK-01", &inc, &[]));
+        assert!(name_matches_keywords("hk-1", &inc, &[]));
+        assert!(!name_matches_keywords("think", &inc, &[]));
+
+        let exc = vec!["US".into()];
+        assert!(name_matches_keywords("任意节点", &[], &exc));
+        assert!(!name_matches_keywords("US-01", &[], &exc));
+        assert!(!name_matches_keywords("us-west", &[], &exc));
+        assert!(name_matches_keywords("trust", &[], &exc));
+        assert!(name_matches_keywords("custom", &[], &exc));
     }
 
     #[test]
