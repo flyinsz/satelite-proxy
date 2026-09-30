@@ -5749,36 +5749,118 @@ tr.dns-diag-tr:hover {
 
 /* PAC script preview — reuses the standard modal chrome; the script is shown
    in a scrollable, selectable mono <pre> with a copy action. */
-/* PAC list editor (Settings → PAC): reuse the rules-page two-column layout. */
-.pac-list-layout {
-  grid-template-columns: 200px 1fr;
+/* PAC list editor (Settings → PAC): reuse the rules-page two-column layout.
+   The category cards are clickable (not draggable), so override the
+   ruleset-item grab cursor. */
+.pac-group-item {
+  cursor: pointer;
 }
 
-.pac-entry-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  padding: 0.5rem 0.75rem;
-  max-height: calc(100vh - 340px);
-  overflow: auto;
+/* PAC service status card — compact grid styled after the rules page's
+   remote-set status card instead of the tall settings-form grid. */
+.pac-status-card {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 12px 14px;
 }
 
-.pac-entry-row {
+.pac-status-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  padding: 0.3rem 0.5rem;
-  border-radius: 6px;
+  flex-wrap: wrap;
 }
 
-.pac-entry-row:hover {
-  background: var(--hover-wash);
+.pac-status-head .sys-proxy-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
 }
 
-.pac-entry-row code {
-  word-break: break-all;
-  font-size: 0.75rem;
+.pac-status-actions {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+/* Two-column compact source controls under the status line. */
+.pac-source-grid {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.7fr) minmax(0, 1.4fr);
+  gap: 0.6rem 0.9rem;
+  align-items: start;
+}
+
+.pac-source-grid .pac-source-preset,
+.pac-source-grid .pac-auto-field,
+.pac-source-grid .pac-port-field {
+  min-width: 0;
+}
+
+.pac-source-grid .pac-source-url {
+  grid-row: span 2;
+  min-width: 0;
+}
+
+.pac-source-grid .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.pac-source-grid .field > span:first-child {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.pac-source-grid .field input,
+.pac-source-grid .field select {
+  padding: 0.4rem 0.55rem;
+  font-size: 0.85rem;
+  border-radius: var(--radius);
+  background: var(--input-bg, var(--panel-elevated));
+  border: 1px solid var(--input-border, var(--border));
+  color: var(--text);
+}
+
+.pac-source-grid .field input:focus,
+.pac-source-grid .field select:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px var(--primary-glow);
+}
+
+.pac-source-grid .field-hint {
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.pac-auto-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.pac-source-save {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 0.4rem;
+}
+
+@media (max-width: 640px) {
+  .pac-source-grid {
+    grid-template-columns: 1fr;
+  }
+  .pac-source-grid .pac-source-url {
+    grid-row: auto;
+  }
 }
 
 .pac-preview-modal {

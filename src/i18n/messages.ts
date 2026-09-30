@@ -446,6 +446,8 @@ const en = {
   "pac.readonly": "Read-only",
   "pac.entryCount": "{n} entries",
   "pac.emptyGroup": "No entries — add one below.",
+  "pac.currentGroup": "Category",
+  "pac.entry": "Entry",
 
   // config / profiles
   "config.title": "Profiles",
@@ -1697,6 +1699,8 @@ const zh: Record<MessageKey, string> = {
   "pac.readonly": "只读",
   "pac.entryCount": "{n} 条",
   "pac.emptyGroup": "暂无条目，在下方添加。",
+  "pac.currentGroup": "分组",
+  "pac.entry": "条目",
 
   "config.title": "订阅",
   "config.desc": "远程订阅 · 本地 · sing-box",
