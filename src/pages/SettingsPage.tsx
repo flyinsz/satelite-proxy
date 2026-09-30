@@ -72,6 +72,9 @@ type SettingsTab =
   | "hosts"
   | "core";
 
+/** Editable PAC list categories (keys mirror `PacList` fields). */
+type PacGroupKey = "domains" | "gfwlist_domains" | "ip_cidrs" | "suffixes" | "regions";
+
 const CUSTOM_BLOCKED_TABS = new Set([
   "rules",
   "chain",
@@ -226,6 +229,10 @@ export function SettingsPage() {
   const [pacPreviewLoading, setPacPreviewLoading] = useState(false);
   const [pacCopied, setPacCopied] = useState(false);
   const pacCopiedTimer = useRef<number | null>(null);
+  /** Left list — currently selected category (domains / ip_cidrs / …). */
+  const [pacActiveGroup, setPacActiveGroup] = useState<PacGroupKey>("domains");
+  /** Draft for the add-entry input in the detail pane. */
+  const [pacNewItem, setPacNewItem] = useState("");
 
   const reloadPacTab = useCallback(async () => {
     const [status, list] = await Promise.all([
@@ -241,17 +248,86 @@ export function SettingsPage() {
     if (list) setPacList(list);
   }, []);
 
-  const parseTextareaList = useCallback(
-    (raw: string): string[] =>
-      [
-        ...new Set(
-          raw
-            .split(/\r?\n/)
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0 && !line.startsWith("#")),
-        ),
-      ],
-    [],
+  /** PAC list categories for the left-list / right-detail layout. */
+  const pacGroups = useMemo(() => {
+    const list = pacList;
+    return [
+      {
+        key: "domains" as const,
+        label: t("pac.domains"),
+        readOnly: false,
+        items: list?.domains ?? [],
+        placeholder: "google.com",
+      },
+      {
+        key: "gfwlist_domains" as const,
+        label: t("pac.gfwlistDomains"),
+        readOnly: true,
+        items: list?.gfwlist_domains ?? [],
+        placeholder: "",
+      },
+      {
+        key: "ip_cidrs" as const,
+        label: t("pac.ipCidrs"),
+        readOnly: false,
+        items: list?.ip_cidrs ?? [],
+        placeholder: "1.2.3.4 / 10.0.0.0/8",
+      },
+      {
+        key: "suffixes" as const,
+        label: t("pac.suffixes"),
+        readOnly: false,
+        items: list?.suffixes ?? [],
+        placeholder: ".githubusercontent.com",
+      },
+      {
+        key: "regions" as const,
+        label: t("pac.regions"),
+        readOnly: false,
+        items: list?.regions ?? [],
+        placeholder: "US / HK",
+      },
+    ];
+  }, [pacList, t]);
+
+  const activePacGroup =
+    pacGroups.find((g) => g.key === pacActiveGroup) ?? pacGroups[0];
+
+  /** Replace one category's entries (trim + de-dup, drop comments/blank). */
+  const updatePacGroup = useCallback((key: PacGroupKey, items: string[]) => {
+    const cleaned = [
+      ...new Set(
+        items
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0 && !s.startsWith("#")),
+      ),
+    ];
+    setPacList((prev) => (prev ? { ...prev, [key]: cleaned } : prev));
+  }, []);
+
+  const addPacEntry = useCallback(() => {
+    const value = pacNewItem.trim();
+    if (!value) return;
+    const key = pacActiveGroup;
+    const current = pacList?.[key] ?? [];
+    if (current.includes(value)) {
+      setPacNewItem("");
+      return;
+    }
+    updatePacGroup(key, [...current, value]);
+    setPacNewItem("");
+  }, [pacNewItem, pacActiveGroup, pacList, updatePacGroup]);
+
+  const removePacEntry = useCallback(
+    (index: number) => {
+      const key = pacActiveGroup;
+      const current = pacList?.[key] ?? [];
+      updatePacGroup(
+        key,
+        current.filter((_, i) => i !== index),
+      );
+    },
+    [pacActiveGroup, pacList, updatePacGroup],
   );
 
   const savePacList = useCallback(async () => {
@@ -259,15 +335,8 @@ export function SettingsPage() {
     setPacSaving(true);
     setPacError(null);
     try {
-      const next: PacList = {
-        domains: parseTextareaList(pacList.domains.join("\n")),
-        // Upstream domains are owned by the refresh flow, not this editor.
-        gfwlist_domains: pacList.gfwlist_domains,
-        ip_cidrs: parseTextareaList(pacList.ip_cidrs.join("\n")),
-        suffixes: parseTextareaList(pacList.suffixes.join("\n")),
-        regions: parseTextareaList(pacList.regions.join("\n")),
-      };
-      const saved = await updatePacList(next);
+      // Entries are normalized on edit; gfwlist stays read-only.
+      const saved = await updatePacList(pacList);
       setPacList(saved);
       setPacStatus(await getPacStatus().catch(() => null));
     } catch (e) {
@@ -275,7 +344,7 @@ export function SettingsPage() {
     } finally {
       setPacSaving(false);
     }
-  }, [pacList, parseTextareaList, t]);
+  }, [pacList, t]);
 
   const onRefreshGfwlist = useCallback(async () => {
     setPacRefreshing(true);
@@ -2186,143 +2255,132 @@ export function SettingsPage() {
                 </div>
               </div>
 
-              {/* ---- Routing list ---- */}
-              <div className="card settings-form settings-form-grid">
-                <label className="field field-span-2">
-                  <span>
-                    {t("pac.gfwlistDomains")}{" "}
-                    <span className="stat-label">
-                      ·{" "}
-                      {t("pac.gfwlistCount", {
-                        n: pacStatus?.gfwlist_count ?? 0,
-                      })}
-                      {" · "}
-                      {t("pac.customCount", {
-                        n: pacStatus?.custom_count ?? 0,
-                      })}
-                    </span>
-                  </span>
-                  <textarea
-                    className="config-paste mono"
-                    rows={4}
-                    readOnly
-                    spellCheck={false}
-                    value={(pacList?.gfwlist_domains ?? []).join("\n")}
-                    placeholder={t("pac.gfwlistEmpty")}
-                  />
-                  <span className="field-hint muted">{t("pac.clearHint")}</span>
-                </label>
+              {/* ---- Routing list: left categories + right detail ---- */}
+              <div className="rules-layout pac-list-layout">
+                <aside className="card ruleset-list rules-route-list">
+                  <div className="ruleset-list-title">{t("pac.listTitle")}</div>
+                  {pacGroups.map((g) => (
+                    <div
+                      key={g.key}
+                      className={`ruleset-item${
+                        pacActiveGroup === g.key ? " selected" : ""
+                      }`}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => {
+                        setPacActiveGroup(g.key);
+                        setPacNewItem("");
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          setPacActiveGroup(g.key);
+                          setPacNewItem("");
+                        }
+                      }}
+                    >
+                      <div className="ruleset-item-top">
+                        <span className="ruleset-name">{g.label}</span>
+                        {g.readOnly && (
+                          <span className="muted" style={{ fontSize: 11 }}>
+                            {t("pac.readonly")}
+                          </span>
+                        )}
+                      </div>
+                      <div className="muted" style={{ fontSize: 12 }}>
+                        {t("pac.entryCount", { n: g.items.length })}
+                      </div>
+                    </div>
+                  ))}
+                </aside>
 
-                <label className="field">
-                  <span>{t("pac.domains")}</span>
-                  <textarea
-                    className="config-paste mono"
-                    rows={6}
-                    placeholder="google.com"
-                    spellCheck={false}
-                    value={(pacList?.domains ?? []).join("\n")}
-                    onChange={(e) =>
-                      setPacList((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              domains: e.target.value.split(/\r?\n/),
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                  <span className="field-hint muted">
-                    {t("pac.domainsHint")}
-                  </span>
-                </label>
+                <section className="rules-main">
+                  <div className="rules-toolbar card">
+                    <div className="header-actions rules-main-actions">
+                      <span className="muted rules-policy-label">
+                        {activePacGroup.label}
+                      </span>
+                      {!activePacGroup.readOnly && (
+                        <div className="rules-toolbar-tail">
+                          <input
+                            autoCapitalize="off"
+                            autoCorrect="off"
+                            spellCheck={false}
+                            className="search rules-filter"
+                            placeholder={activePacGroup.placeholder}
+                            value={pacNewItem}
+                            onChange={(e) => setPacNewItem(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                addPacEntry();
+                              }
+                            }}
+                          />
+                          <GlassButton
+                            icon="+"
+                            disabled={!pacNewItem.trim()}
+                            onClick={addPacEntry}
+                          >
+                            {t("common.add")}
+                          </GlassButton>
+                        </div>
+                      )}
+                    </div>
+                  </div>
 
-                <label className="field">
-                  <span>{t("pac.ipCidrs")}</span>
-                  <textarea
-                    className="config-paste mono"
-                    rows={6}
-                    placeholder="1.2.3.4
-10.0.0.0/8"
-                    spellCheck={false}
-                    value={(pacList?.ip_cidrs ?? []).join("\n")}
-                    onChange={(e) =>
-                      setPacList((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              ip_cidrs: e.target.value.split(/\r?\n/),
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                  <span className="field-hint muted">
-                    {t("pac.ipCidrsHint")}
-                  </span>
-                </label>
+                  <div className="card">
+                    {activePacGroup.readOnly && (
+                      <div
+                        className="field-hint muted"
+                        style={{ padding: "0.6rem 0.75rem 0" }}
+                      >
+                        {t("pac.clearHint")}
+                      </div>
+                    )}
+                    {activePacGroup.items.length === 0 ? (
+                      <div className="empty muted">
+                        {activePacGroup.readOnly
+                          ? t("pac.gfwlistEmpty")
+                          : t("pac.emptyGroup")}
+                      </div>
+                    ) : (
+                      <div className="pac-entry-list">
+                        {activePacGroup.items.map((item, i) => (
+                          <div key={`${item}-${i}`} className="pac-entry-row">
+                            <code className="mono">{item}</code>
+                            {!activePacGroup.readOnly && (
+                              <button
+                                type="button"
+                                className="icon-btn"
+                                aria-label={t("common.delete")}
+                                onClick={() => removePacEntry(i)}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
 
-                <label className="field">
-                  <span>{t("pac.suffixes")}</span>
-                  <textarea
-                    className="config-paste mono"
-                    rows={6}
-                    placeholder=".githubusercontent.com"
-                    spellCheck={false}
-                    value={(pacList?.suffixes ?? []).join("\n")}
-                    onChange={(e) =>
-                      setPacList((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              suffixes: e.target.value.split(/\r?\n/),
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                  <span className="field-hint muted">
-                    {t("pac.suffixesHint")}
-                  </span>
-                </label>
-
-                <label className="field">
-                  <span>{t("pac.regions")}</span>
-                  <textarea
-                    className="config-paste mono"
-                    rows={6}
-                    placeholder="US
-HK"
-                    spellCheck={false}
-                    value={(pacList?.regions ?? []).join("\n")}
-                    onChange={(e) =>
-                      setPacList((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              regions: e.target.value.split(/\r?\n/),
-                            }
-                          : prev,
-                      )
-                    }
-                  />
-                  <span className="field-hint muted">
-                    {t("pac.regionsHint")}
-                  </span>
-                </label>
-
-                <div
-                  className="field field-span-2"
-                  style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap" }}
-                >
-                  <GlassButton
-                    icon="💾"
-                    disabled={pacSaving || !pacList}
-                    onClick={() => void savePacList()}
+                  <div
+                    style={{
+                      display: "flex",
+                      gap: "0.6rem",
+                      marginTop: "0.6rem",
+                    }}
                   >
-                    {pacSaving ? t("pac.saving") : t("pac.save")}
-                  </GlassButton>
-                </div>
+                    <GlassButton
+                      icon="💾"
+                      variant="primary"
+                      disabled={pacSaving || !pacList}
+                      onClick={() => void savePacList()}
+                    >
+                      {pacSaving ? t("pac.saving") : t("pac.save")}
+                    </GlassButton>
+                  </div>
+                </section>
               </div>
             </>
           )}

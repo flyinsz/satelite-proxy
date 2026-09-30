@@ -442,6 +442,10 @@ const en = {
   "pac.previewLoading": "Generating…",
   "pac.previewError": "Failed to generate the PAC script: {err}",
   "pac.close": "Close",
+  "pac.listTitle": "Categories",
+  "pac.readonly": "Read-only",
+  "pac.entryCount": "{n} entries",
+  "pac.emptyGroup": "No entries — add one below.",
 
   // config / profiles
   "config.title": "Profiles",
@@ -1689,6 +1693,10 @@ const zh: Record<MessageKey, string> = {
   "pac.previewLoading": "生成中…",
   "pac.previewError": "生成 PAC 脚本失败：{err}",
   "pac.close": "关闭",
+  "pac.listTitle": "名单分类",
+  "pac.readonly": "只读",
+  "pac.entryCount": "{n} 条",
+  "pac.emptyGroup": "暂无条目，在下方添加。",
 
   "config.title": "订阅",
   "config.desc": "远程订阅 · 本地 · sing-box",

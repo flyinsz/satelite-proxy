@@ -5749,6 +5749,38 @@ tr.dns-diag-tr:hover {
 
 /* PAC script preview — reuses the standard modal chrome; the script is shown
    in a scrollable, selectable mono <pre> with a copy action. */
+/* PAC list editor (Settings → PAC): reuse the rules-page two-column layout. */
+.pac-list-layout {
+  grid-template-columns: 200px 1fr;
+}
+
+.pac-entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  padding: 0.5rem 0.75rem;
+  max-height: calc(100vh - 340px);
+  overflow: auto;
+}
+
+.pac-entry-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+}
+
+.pac-entry-row:hover {
+  background: var(--hover-wash);
+}
+
+.pac-entry-row code {
+  word-break: break-all;
+  font-size: 0.75rem;
+}
+
 .pac-preview-modal {
   width: min(720px, 100%);
   max-height: min(90vh, 900px);
