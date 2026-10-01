@@ -5797,12 +5797,13 @@ tr.dns-diag-tr:hover {
 }
 
 /* Source form — row 1: preset + update URL;
-   row 2 (pac-form-foot): auto-update toggle · last update · save. */
+   row 2 (pac-form-foot): auto-update toggle · last update · save.
+   Top-align every column so labels sit on one line. */
 .pac-form-grid {
   display: grid;
   grid-template-columns: 1fr 2fr;
   gap: 0.75rem;
-  align-items: end;
+  align-items: start;
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--border);
@@ -5850,12 +5851,13 @@ tr.dns-diag-tr:hover {
   line-height: 1.4;
 }
 
-/* Row 2: auto-update | last update | save — spread across the card. */
+/* Row 2: auto-update | last update | save — spread across the card,
+   top-aligned so the three labels share one baseline. */
 .pac-form-foot {
   display: grid;
   grid-template-columns: 1fr 1.4fr auto;
   gap: 0.75rem;
-  align-items: end;
+  align-items: start;
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px dashed var(--border);
