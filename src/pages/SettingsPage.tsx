@@ -307,6 +307,11 @@ export function SettingsPage() {
       builtin: boolean,
     ): PacGroupVM => {
       const grp = g(id);
+      // The gfwlist mirror's source lives in the global PAC settings
+      // (store pac_source_url / pac_auto_update / interval), not in
+      // groups[].remote_url — keep it visible here so the edit modal and
+      // the ⋮ refresh entry work for the builtin as well.
+      const isGfwlist = id === "gfwlist_domains";
       return {
         id,
         label,
@@ -315,9 +320,11 @@ export function SettingsPage() {
         placeholder,
         enabled: grp.enabled,
         builtin,
-        remoteUrl: grp.remote_url ?? "",
-        autoUpdate: grp.auto_update,
-        intervalHours: grp.update_interval_hours,
+        remoteUrl: isGfwlist ? (pacSourceUrl || "") : (grp.remote_url ?? ""),
+        autoUpdate: isGfwlist ? pacAutoUpdate : grp.auto_update,
+        intervalHours: isGfwlist
+          ? pacIntervalHours
+          : grp.update_interval_hours,
       };
     };
     const builtins: PacGroupVM[] = [
@@ -333,7 +340,7 @@ export function SettingsPage() {
         vm(x.id, x.name, false, x.items, "google.com", false),
       );
     return [...builtins, ...custom];
-  }, [pacList, t]);
+  }, [pacList, pacSourceUrl, pacAutoUpdate, pacIntervalHours, t]);
 
   const activePacGroup =
     pacGroups.find((g) => g.id === pacActiveGroup) ?? pacGroups[0];
@@ -504,6 +511,45 @@ export function SettingsPage() {
       setPacEditInterval(24);
     },
     [],
+  );
+
+  /** Save the edit modal — gfwlist persists its source via the global
+      PAC settings (updatePacSettings), every other group via
+      savePacGroup (name + groups[].remote_url). */
+  const savePacEdit = useCallback(
+    async (id: string | null, name: string, remoteUrl: string, autoUpdate: boolean, interval: number) => {
+      if (id === "gfwlist_domains") {
+        const url = remoteUrl.trim();
+        if (!/^https?:\/\//i.test(url)) {
+          setPacError(t("pac.sourceInvalid"));
+          return;
+        }
+        setPacSettingsSaving(true);
+        setPacError(null);
+        try {
+          const status = await updatePacSettings({
+            sourceUrl: url,
+            autoUpdate,
+            updateIntervalHours: interval,
+            pacPort: pacStatus?.port,
+          });
+          setPacStatus(status);
+          setPacSourceUrl(status.source_url);
+          setPacAutoUpdate(status.auto_update);
+          setPacIntervalHours(status.update_interval_hours);
+          setPacEditOpen(false);
+        } catch (e) {
+          setPacError(
+            t("pac.settingsError", { err: typeof e === "string" ? e : String(e) }),
+          );
+        } finally {
+          setPacSettingsSaving(false);
+        }
+        return;
+      }
+      savePacGroup(id, name, remoteUrl, autoUpdate, interval);
+    },
+    [pacPort, savePacGroup, t],
   );
 
   const savePacList = useCallback(async () => {
@@ -2656,7 +2702,7 @@ export function SettingsPage() {
                         if (e.key === "Enter") {
                           e.preventDefault();
                           if (pacEditName.trim()) {
-                            savePacGroup(
+                            void savePacEdit(
                               pacEditGroup,
                               pacEditName,
                               pacEditRemoteUrl,
@@ -2732,9 +2778,9 @@ export function SettingsPage() {
                   </GlassButton>
                   <GlassButton
                     variant="primary"
-                    disabled={!pacEditName.trim()}
+                    disabled={!pacEditName.trim() || pacSettingsSaving}
                     onClick={() =>
-                      savePacGroup(
+                      void savePacEdit(
                         pacEditGroup,
                         pacEditName,
                         pacEditRemoteUrl,
@@ -2743,7 +2789,9 @@ export function SettingsPage() {
                       )
                     }
                   >
-                    {t("pac.confirm")}
+                    {pacSettingsSaving
+                      ? t("pac.saving")
+                      : t("pac.confirm")}
                   </GlassButton>
                 </footer>
               </div>
