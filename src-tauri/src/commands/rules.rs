@@ -1,7 +1,6 @@
 use crate::config::{dump_rule_set_files, remove_rule_set_files};
 use crate::domain::{
-    NodePool, Rule, RuleSet, RuleSetDnsStrategy, RuleSetStrategy, RuleSetSummary, RuleTarget,
-    RuleType,
+    Rule, RuleSet, RuleSetDnsStrategy, RuleSetStrategy, RuleSetSummary, RuleTarget, RuleType,
 };
 use crate::state::AppState;
 use serde::{Deserialize, Serialize};

@@ -578,6 +578,10 @@ export interface PacGroup {
   name: string;
   enabled: boolean;
   items: string[];
+  /** Remote source URL; null = purely local group. */
+  remote_url: string | null;
+  auto_update: boolean;
+  update_interval_hours: number | null;
 }
 
 /** One built-in gfwlist mirror (list_pac_source_presets). */

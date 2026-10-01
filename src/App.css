@@ -5764,6 +5764,59 @@ tr.dns-diag-tr:hover {
   flex-wrap: wrap;
 }
 
+.pac-auto-row select {
+  flex: 0 0 auto;
+}
+
+.pac-auto-row input[type="text"] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Global PAC port chip in the right toolbar — clickable, opens the port modal. */
+.pac-port-chip {
+  font-size: 0.72rem;
+  color: var(--muted);
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pac-port-chip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+/* Group editor modal (new / edit group: name + remote URL + auto-update). */
+.pac-group-modal {
+  width: min(520px, 100%);
+}
+
+.pac-group-modal .modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+/* Port modal — single field, roomier than a bare form. */
+.pac-settings-modal {
+  width: min(420px, 100%);
+}
+
+.pac-settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pac-settings-body .field > span:first-child {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
 .pac-preview-modal {
   width: min(720px, 100%);
   max-height: min(90vh, 900px);

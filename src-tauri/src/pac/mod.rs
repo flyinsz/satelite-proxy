@@ -72,6 +72,15 @@ pub struct PacGroup {
     /// 条目（后缀域名列表，语义同 `domains`）。
     #[serde(default)]
     pub items: Vec<String>,
+    /// 远程来源 URL（可选；`None` 表示纯本地分组，只能手改条目）。
+    #[serde(default)]
+    pub remote_url: Option<String>,
+    /// 是否对该分组自动更新（仅当有远程地址时有效）。
+    #[serde(default)]
+    pub auto_update: bool,
+    /// 自动更新间隔（小时），`None` 用默认值。
+    #[serde(default)]
+    pub update_interval_hours: Option<u32>,
 }
 
 fn default_true() -> bool {
@@ -190,12 +199,18 @@ mod tests {
                     name: "domains".into(),
                     enabled: false,
                     items: vec![],
+                    remote_url: None,
+                    auto_update: false,
+                    update_interval_hours: None,
                 },
                 PacGroup {
                     id: "gfwlist_domains".into(),
                     name: "gfwlist_domains".into(),
                     enabled: false,
                     items: vec![],
+                    remote_url: None,
+                    auto_update: false,
+                    update_interval_hours: None,
                 },
             ],
             ..PacList::default()

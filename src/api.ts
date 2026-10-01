@@ -835,6 +835,11 @@ export function refreshGfwlist() {
   return invoke<PacList>("refresh_gfwlist");
 }
 
+/** Re-pull one custom group's remote URL and replace its items. */
+export function refreshPacGroup(groupId: string) {
+  return invoke<PacList>("refresh_pac_group", { groupId });
+}
+
 /** Live PAC service state (kind / enabled / url / counts / last update). */
 export function getPacStatus() {
   return invoke<PacStatus>("get_pac_status");

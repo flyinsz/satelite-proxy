@@ -78,6 +78,29 @@ pub async fn refresh_gfwlist(
     result
 }
 
+/// 拉取指定分组的远程地址并替换该分组条目（网络操作，走 spawn_blocking）。
+#[tauri::command]
+pub async fn refresh_pac_group(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    group_id: String,
+) -> Result<crate::pac::PacList, String> {
+    let _ = &state;
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app
+            .try_state::<AppState>()
+            .ok_or_else(|| "app state unavailable".to_string())?;
+        state
+            .refresh_pac_group(&group_id)
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("refresh pac group task: {e}"))?;
+    crate::tray::refresh_icon(&app);
+    result
+}
+
 /// PAC 功能状态快照（实现方式 / 是否启用 / URL / 域名数 / 刷新时间）。
 #[tauri::command]
 pub async fn get_pac_status(state: State<'_, AppState>) -> Result<PacStatus, String> {

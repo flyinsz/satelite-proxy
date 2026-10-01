@@ -18,6 +18,7 @@ import {
   getProxyStatus,
   getSettings,
   refreshGfwlist,
+  refreshPacGroup,
   regenerateApiSecret,
   restartProxy,
   setCoreType,
@@ -51,6 +52,7 @@ import type {
   DiagnosticIssue,
   ExtraInbound,
   HeroStyle,
+  PacGroup,
   PacList,
   PacSourcePreset,
   PacStatus,
@@ -93,6 +95,9 @@ interface PacGroupVM {
   placeholder: string;
   enabled: boolean;
   builtin: boolean;
+  remoteUrl: string;
+  autoUpdate: boolean;
+  intervalHours: number | null;
 }
 
 const CUSTOM_BLOCKED_TABS = new Set([
@@ -255,14 +260,15 @@ export function SettingsPage() {
   const [pacNewItem, setPacNewItem] = useState("");
   /** Which group's ⋮ menu is open (rules-page style). */
   const [pacMenuGroup, setPacMenuGroup] = useState<string | null>(null);
-  /** "New group" modal. */
-  const [pacNewGroupOpen, setPacNewGroupOpen] = useState(false);
-  const [pacNewGroupName, setPacNewGroupName] = useState("");
-  /** "Rename" modal. */
-  const [pacRenameGroup, setPacRenameGroup] = useState<string | null>(null);
-  const [pacRenameName, setPacRenameName] = useState("");
-  /** "Update settings" modal (source URL / port / auto-update). */
-  const [pacSettingsOpen, setPacSettingsOpen] = useState(false);
+  /** "New/Edit group" modal — shared by 新建 (id=null) and 编辑 (id set). */
+  const [pacEditOpen, setPacEditOpen] = useState(false);
+  const [pacEditGroup, setPacEditGroup] = useState<string | null>(null);
+  const [pacEditName, setPacEditName] = useState("");
+  const [pacEditRemoteUrl, setPacEditRemoteUrl] = useState("");
+  const [pacEditAutoUpdate, setPacEditAutoUpdate] = useState(false);
+  const [pacEditInterval, setPacEditInterval] = useState(24);
+  /** "Port" modal — global PAC service port, reachable from the right toolbar. */
+  const [pacPortOpen, setPacPortOpen] = useState(false);
 
   const reloadPacTab = useCallback(async () => {
     const [status, list] = await Promise.all([
@@ -282,71 +288,50 @@ export function SettingsPage() {
       Builtin ids map to the legacy flat fields; custom groups carry items. */
   const pacGroups = useMemo(() => {
     const list = pacList;
-    const g = (id: string) =>
+    const g = (id: string): PacGroup =>
       list?.groups.find((x) => x.id === id) ?? {
         id,
         name: id,
         enabled: true,
         items: [],
+        remote_url: null,
+        auto_update: false,
+        update_interval_hours: null,
       };
+    const vm = (
+      id: string,
+      label: string,
+      readOnly: boolean,
+      items: string[],
+      placeholder: string,
+      builtin: boolean,
+    ): PacGroupVM => {
+      const grp = g(id);
+      return {
+        id,
+        label,
+        readOnly,
+        items,
+        placeholder,
+        enabled: grp.enabled,
+        builtin,
+        remoteUrl: grp.remote_url ?? "",
+        autoUpdate: grp.auto_update,
+        intervalHours: grp.update_interval_hours,
+      };
+    };
     const builtins: PacGroupVM[] = [
-      {
-        id: "domains",
-        label: t("pac.domains"),
-        readOnly: false,
-        items: list?.domains ?? [],
-        placeholder: "google.com",
-        enabled: g("domains").enabled,
-        builtin: true,
-      },
-      {
-        id: "gfwlist_domains",
-        label: t("pac.gfwlistDomains"),
-        readOnly: true,
-        items: list?.gfwlist_domains ?? [],
-        placeholder: "",
-        enabled: g("gfwlist_domains").enabled,
-        builtin: true,
-      },
-      {
-        id: "ip_cidrs",
-        label: t("pac.ipCidrs"),
-        readOnly: false,
-        items: list?.ip_cidrs ?? [],
-        placeholder: "1.2.3.4 / 10.0.0.0/8",
-        enabled: g("ip_cidrs").enabled,
-        builtin: true,
-      },
-      {
-        id: "suffixes",
-        label: t("pac.suffixes"),
-        readOnly: false,
-        items: list?.suffixes ?? [],
-        placeholder: ".githubusercontent.com",
-        enabled: g("suffixes").enabled,
-        builtin: true,
-      },
-      {
-        id: "regions",
-        label: t("pac.regions"),
-        readOnly: false,
-        items: list?.regions ?? [],
-        placeholder: "US / HK",
-        enabled: g("regions").enabled,
-        builtin: true,
-      },
+      vm("domains", t("pac.domains"), false, list?.domains ?? [], "google.com", true),
+      vm("gfwlist_domains", t("pac.gfwlistDomains"), true, list?.gfwlist_domains ?? [], "", true),
+      vm("ip_cidrs", t("pac.ipCidrs"), false, list?.ip_cidrs ?? [], "1.2.3.4 / 10.0.0.0/8", true),
+      vm("suffixes", t("pac.suffixes"), false, list?.suffixes ?? [], ".githubusercontent.com", true),
+      vm("regions", t("pac.regions"), false, list?.regions ?? [], "US / HK", true),
     ];
     const custom: PacGroupVM[] = (list?.groups ?? [])
       .filter((x) => !BUILTIN_PAC_IDS.has(x.id))
-      .map((x) => ({
-        id: x.id,
-        label: x.name,
-        readOnly: false,
-        items: x.items,
-        placeholder: "google.com",
-        enabled: x.enabled,
-        builtin: false,
-      }));
+      .map((x) =>
+        vm(x.id, x.name, false, x.items, "google.com", false),
+      );
     return [...builtins, ...custom];
   }, [pacList, t]);
 
@@ -385,18 +370,18 @@ export function SettingsPage() {
       const exists = prev.groups.some((x) => x.id === id);
       const groups = exists
         ? prev.groups.map((x) => (x.id === id ? { ...x, enabled } : x))
-        : [...prev.groups, { id, name: id, enabled, items: [] }];
-      return { ...prev, groups };
-    });
-  }, []);
-
-  /** Rename a custom group (builtin labels stay fixed). */
-  const renamePacGroup = useCallback((id: string, name: string) => {
-    setPacList((prev) => {
-      if (!prev) return prev;
-      const groups = prev.groups.map((x) =>
-        x.id === id ? { ...x, name: name.trim() || x.name } : x,
-      );
+        : [
+            ...prev.groups,
+            {
+              id,
+              name: id,
+              enabled,
+              items: [] as string[],
+              remote_url: null as string | null,
+              auto_update: false,
+              update_interval_hours: null as number | null,
+            },
+          ];
       return { ...prev, groups };
     });
   }, []);
@@ -416,6 +401,15 @@ export function SettingsPage() {
   const resetPacGroups = useCallback(() => {
     setPacList((prev) => {
       if (!prev) return prev;
+      const mk = (id: string): PacGroup => ({
+        id,
+        name: id,
+        enabled: true,
+        items: [],
+        remote_url: null,
+        auto_update: false,
+        update_interval_hours: null,
+      });
       return {
         ...prev,
         domains: [],
@@ -423,11 +417,11 @@ export function SettingsPage() {
         suffixes: [],
         regions: [],
         groups: [
-          { id: "domains", name: "domains", enabled: true, items: [] },
-          { id: "gfwlist_domains", name: "gfwlist_domains", enabled: true, items: [] },
-          { id: "ip_cidrs", name: "ip_cidrs", enabled: true, items: [] },
-          { id: "suffixes", name: "suffixes", enabled: true, items: [] },
-          { id: "regions", name: "regions", enabled: true, items: [] },
+          mk("domains"),
+          mk("gfwlist_domains"),
+          mk("ip_cidrs"),
+          mk("suffixes"),
+          mk("regions"),
         ],
       };
     });
@@ -458,25 +452,56 @@ export function SettingsPage() {
     [pacActiveGroup, activePacGroup, updatePacGroup],
   );
 
-  /** Create a new custom group (unique id, enabled, empty items). */
-  const createPacGroup = useCallback(
-    (name: string) => {
+  /** Create or edit a group (id=null → new; id set → update name /
+      remote URL / auto-update). Builtin groups keep their fixed labels and
+      legacy field mapping, but may still carry a remote URL + auto-update
+      (e.g. gfwlist mirror preset). */
+  const savePacGroup = useCallback(
+    (id: string | null, name: string, remoteUrl: string, autoUpdate: boolean, interval: number) => {
       const trimmed = name.trim();
       if (!trimmed) return;
-      const id = `group-${Date.now()}`;
+      const url = remoteUrl.trim();
+      const patch: Partial<PacGroup> = {
+        remote_url: url || null,
+        auto_update: autoUpdate && !!url,
+        update_interval_hours: autoUpdate && url ? interval : null,
+      };
       setPacList((prev) => {
         if (!prev) return prev;
+        if (id === null) {
+          const nid = `group-${Date.now()}`;
+          const group: PacGroup = {
+            id: nid,
+            name: trimmed,
+            enabled: true,
+            items: [],
+            remote_url: patch.remote_url ?? null,
+            auto_update: patch.auto_update ?? false,
+            update_interval_hours: patch.update_interval_hours ?? null,
+          };
+          setPacActiveGroup(nid);
+          return { ...prev, groups: [...prev.groups, group] };
+        }
         return {
           ...prev,
-          groups: [
-            ...prev.groups,
-            { id, name: trimmed, enabled: true, items: [] },
-          ],
+          groups: prev.groups.map((x) =>
+            x.id === id
+              ? {
+                  ...x,
+                  // Builtin labels are fixed (localized); only custom
+                  // groups may be renamed.
+                  ...(BUILTIN_PAC_IDS.has(id) ? {} : { name: trimmed }),
+                  ...patch,
+                }
+              : x,
+          ),
         };
       });
-      setPacActiveGroup(id);
-      setPacNewGroupOpen(false);
-      setPacNewGroupName("");
+      setPacEditOpen(false);
+      setPacEditName("");
+      setPacEditRemoteUrl("");
+      setPacEditAutoUpdate(false);
+      setPacEditInterval(24);
     },
     [],
   );
@@ -488,6 +513,7 @@ export function SettingsPage() {
     try {
       // Entries are normalized on edit; gfwlist stays read-only.
       const saved = await updatePacList(pacList);
+      pacSavedRef.current = saved;
       setPacList(saved);
       setPacStatus(await getPacStatus().catch(() => null));
     } catch (e) {
@@ -498,13 +524,19 @@ export function SettingsPage() {
   }, [pacList, t]);
 
   /** Auto-persist list changes (group toggle / entries / create / rename /
-      delete / reset) like the rules page — no explicit save button. */
+      delete / reset) like the rules page — no explicit save button.
+      `pacSavedRef` holds the last server-acknowledged copy so the
+      `setPacList(saved)` inside savePacList does not loop back into
+      another save (which previously kept pacSaving true forever and made
+      the reset button look stuck in a busy state). */
   const pacFirstLoaded = useRef(false);
+  const pacSavedRef = useRef<PacList | null>(null);
   useEffect(() => {
     if (!pacList || !pacFirstLoaded.current) {
       pacFirstLoaded.current = !!pacList;
       return;
     }
+    if (pacSavedRef.current === pacList) return;
     const tmr = window.setTimeout(() => {
       void savePacList();
     }, 250);
@@ -512,49 +544,30 @@ export function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pacList]);
 
-  const onRefreshGfwlist = useCallback(async () => {
-    setPacRefreshing(true);
-    setPacError(null);
-    try {
-      const merged = await refreshGfwlist();
-      setPacList(merged);
-      setPacStatus(await getPacStatus().catch(() => null));
-    } catch (e) {
-      setPacError(t("pac.refreshError", { err: typeof e === "string" ? e : String(e) }));
-    } finally {
-      setPacRefreshing(false);
-    }
-  }, [t]);
-
-  /** Commit source URL / auto-update / interval / port in one call. */
-  const savePacSettings = useCallback(async () => {
-    const url = pacSourceUrl.trim();
-    if (!/^https?:\/\//i.test(url)) {
-      setPacError(t("pac.sourceInvalid"));
-      return;
-    }
-    const port = Number.parseInt(pacPort, 10);
-    if (!Number.isFinite(port) || port < 1 || port > 65535) {
-      setPacError(t("pac.portInvalid"));
-      return;
-    }
-    setPacSettingsSaving(true);
-    setPacError(null);
-    try {
-      const status = await updatePacSettings({
-        sourceUrl: url,
-        autoUpdate: pacAutoUpdate,
-        updateIntervalHours: pacIntervalHours,
-        pacPort: port,
-      });
-      setPacStatus(status);
-      setPacSourceUrl(status.source_url);
-    } catch (e) {
-      setPacError(t("pac.settingsError", { err: typeof e === "string" ? e : String(e) }));
-    } finally {
-      setPacSettingsSaving(false);
-    }
-  }, [pacSourceUrl, pacAutoUpdate, pacIntervalHours, pacPort, t]);
+  /** Manual refresh for any group with a remote URL — custom groups go
+      through refresh_pac_group; the gfwlist builtin keeps its own command
+      (it is special-cased upstream). */
+  const onRefreshPacGroup = useCallback(
+    async (id: string) => {
+      setPacRefreshing(true);
+      setPacError(null);
+      try {
+        if (id === "gfwlist_domains") {
+          setPacList(await refreshGfwlist());
+        } else {
+          setPacList(await refreshPacGroup(id));
+        }
+        setPacStatus(await getPacStatus().catch(() => null));
+      } catch (e) {
+        setPacError(
+          t("pac.refreshError", { err: typeof e === "string" ? e : String(e) }),
+        );
+      } finally {
+        setPacRefreshing(false);
+      }
+    },
+    [t],
+  );
 
   const onClearGfwlist = useCallback(async () => {
     setPacClearing(true);
@@ -2309,8 +2322,12 @@ export function SettingsPage() {
                     <GlassButton
                       icon="+"
                       onClick={() => {
-                        setPacNewGroupOpen(true);
-                        setPacNewGroupName("");
+                        setPacEditGroup(null);
+                        setPacEditName("");
+                        setPacEditRemoteUrl("");
+                        setPacEditAutoUpdate(false);
+                        setPacEditInterval(24);
+                        setPacEditOpen(true);
                       }}
                       title={t("pac.newGroupTitle")}
                     >
@@ -2319,11 +2336,15 @@ export function SettingsPage() {
                     <GlassButton
                       icon="↺"
                       onClick={() => void resetPacGroups()}
-                      disabled={pacSaving}
                       title={t("pac.resetGroupsHint")}
                     >
                       {t("pac.resetGroups")}
                     </GlassButton>
+                    {pacSaving && (
+                      <span className="muted" style={{ fontSize: 11 }}>
+                        {t("pac.saving")}
+                      </span>
+                    )}
                   </div>
 
                   {pacGroups.map((g, gi) => (
@@ -2396,20 +2417,22 @@ export function SettingsPage() {
                               }`}
                               role="menu"
                             >
-                              {!g.readOnly && (
-                                <button
-                                  type="button"
-                                  role="menuitem"
-                                  className="rule-menu-item"
-                                  onClick={() => {
-                                    setPacMenuGroup(null);
-                                    setPacRenameGroup(g.id);
-                                    setPacRenameName(g.label);
-                                  }}
-                                >
-                                  {t("pac.renameGroup")}
-                                </button>
-                              )}
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="rule-menu-item"
+                                onClick={() => {
+                                  setPacMenuGroup(null);
+                                  setPacEditGroup(g.id);
+                                  setPacEditName(g.label);
+                                  setPacEditRemoteUrl(g.remoteUrl);
+                                  setPacEditAutoUpdate(g.autoUpdate);
+                                  setPacEditInterval(g.intervalHours ?? 24);
+                                  setPacEditOpen(true);
+                                }}
+                              >
+                                {t("pac.editGroup")}
+                              </button>
                               {!g.builtin && (
                                 <button
                                   type="button"
@@ -2423,31 +2446,24 @@ export function SettingsPage() {
                                   {t("pac.deleteGroup")}
                                 </button>
                               )}
-                              {g.readOnly && (
+                              {g.remoteUrl && (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="rule-menu-item"
+                                  disabled={pacRefreshing}
+                                  onClick={() => {
+                                    setPacMenuGroup(null);
+                                    void onRefreshPacGroup(g.id);
+                                  }}
+                                >
+                                  {pacRefreshing
+                                    ? t("pac.refreshing")
+                                    : t("pac.refresh")}
+                                </button>
+                              )}
+                              {g.builtin && g.id === "gfwlist_domains" && (
                                 <>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="rule-menu-item"
-                                    onClick={() => {
-                                      setPacMenuGroup(null);
-                                      setPacSettingsOpen(true);
-                                    }}
-                                  >
-                                    {t("pac.updateSettings")}
-                                  </button>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="rule-menu-item"
-                                    disabled={pacRefreshing}
-                                    onClick={() => {
-                                      setPacMenuGroup(null);
-                                      void onRefreshGfwlist();
-                                    }}
-                                  >
-                                    {pacRefreshing ? t("pac.refreshing") : t("pac.refresh")}
-                                  </button>
                                   <button
                                     type="button"
                                     role="menuitem"
@@ -2492,6 +2508,22 @@ export function SettingsPage() {
                           {t("pac.currentGroup")}
                         </span>
                         <span className="pill">{activePacGroup?.label}</span>
+                        <span className="muted rules-policy-label"> · </span>
+                        <span
+                          className="mono pac-port-chip"
+                          role="button"
+                          tabIndex={0}
+                          title={t("pac.portHint")}
+                          onClick={() => setPacPortOpen(true)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              setPacPortOpen(true);
+                            }
+                          }}
+                        >
+                          {t("pac.port")}: {pacStatus?.port ?? "…"}
+                        </span>
                       </div>
                       {!activePacGroup?.readOnly && (
                         <div className="rules-toolbar-tail">
@@ -2582,23 +2614,27 @@ export function SettingsPage() {
             </>
           )}
 
-          {pacNewGroupOpen && (
+          {pacEditOpen && (
             <div
               className="modal-backdrop"
               role="dialog"
               aria-modal="true"
-              onClick={() => setPacNewGroupOpen(false)}
+              onClick={() => setPacEditOpen(false)}
             >
               <div
                 className="modal pac-group-modal"
                 onClick={(e) => e.stopPropagation()}
               >
                 <header className="modal-header">
-                  <h2>{t("pac.newGroupTitle")}</h2>
+                  <h2>
+                    {pacEditGroup === null
+                      ? t("pac.newGroupTitle")
+                      : t("pac.editGroupTitle")}
+                  </h2>
                   <button
                     type="button"
                     className="icon-btn"
-                    onClick={() => setPacNewGroupOpen(false)}
+                    onClick={() => setPacEditOpen(false)}
                     aria-label={t("pac.close")}
                   >
                     ×
@@ -2613,93 +2649,99 @@ export function SettingsPage() {
                       type="text"
                       spellCheck={false}
                       placeholder={t("pac.newGroupNamePh")}
-                      value={pacNewGroupName}
-                      onChange={(e) => setPacNewGroupName(e.target.value)}
+                      value={pacEditName}
+                      disabled={pacEditGroup !== null && BUILTIN_PAC_IDS.has(pacEditGroup)}
+                      onChange={(e) => setPacEditName(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === "Enter") {
                           e.preventDefault();
-                          if (pacNewGroupName.trim()) createPacGroup(pacNewGroupName);
-                        }
-                      }}
-                    />
-                    <span className="field-hint muted">
-                      {t("pac.newGroupHint")}
-                    </span>
-                  </label>
-                </div>
-                <footer className="modal-footer">
-                  <GlassButton onClick={() => setPacNewGroupOpen(false)}>
-                    {t("pac.cancel")}
-                  </GlassButton>
-                  <GlassButton
-                    variant="primary"
-                    disabled={!pacNewGroupName.trim()}
-                    onClick={() => createPacGroup(pacNewGroupName)}
-                  >
-                    {t("pac.create")}
-                  </GlassButton>
-                </footer>
-              </div>
-            </div>
-          )}
-
-          {pacRenameGroup !== null && (
-            <div
-              className="modal-backdrop"
-              role="dialog"
-              aria-modal="true"
-              onClick={() => setPacRenameGroup(null)}
-            >
-              <div
-                className="modal pac-group-modal"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <header className="modal-header">
-                  <h2>{t("pac.renameGroupTitle")}</h2>
-                  <button
-                    type="button"
-                    className="icon-btn"
-                    onClick={() => setPacRenameGroup(null)}
-                    aria-label={t("pac.close")}
-                  >
-                    ×
-                  </button>
-                </header>
-                <div className="modal-body">
-                  <label className="field">
-                    <span>{t("pac.newGroupName")}</span>
-                    <input
-                      autoFocus
-                      className="config-paste"
-                      type="text"
-                      spellCheck={false}
-                      value={pacRenameName}
-                      onChange={(e) => setPacRenameName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          if (pacRenameName.trim() && pacRenameGroup) {
-                            renamePacGroup(pacRenameGroup, pacRenameName);
-                            setPacRenameGroup(null);
+                          if (pacEditName.trim()) {
+                            savePacGroup(
+                              pacEditGroup,
+                              pacEditName,
+                              pacEditRemoteUrl,
+                              pacEditAutoUpdate,
+                              pacEditInterval,
+                            );
                           }
                         }
                       }}
                     />
+                    {pacEditGroup !== null && BUILTIN_PAC_IDS.has(pacEditGroup) && (
+                      <span className="field-hint muted">
+                        {t("pac.builtinNameLocked")}
+                      </span>
+                    )}
+                  </label>
+                  <label className="field">
+                    <span>{t("pac.remoteUrl")}</span>
+                    <div className="pac-auto-row">
+                      <SolidSelect
+                        value={
+                          pacPresets.find((p) => p.url === pacEditRemoteUrl)?.id ??
+                          "custom"
+                        }
+                        options={[
+                          ...pacPresets.map((p) => ({
+                            value: p.id,
+                            label: p.label,
+                          })),
+                          { value: "custom", label: t("pac.sourceCustom") },
+                        ]}
+                        onChange={(id) => {
+                          const preset = pacPresets.find((p) => p.id === id);
+                          if (preset) setPacEditRemoteUrl(preset.url);
+                        }}
+                      />
+                      <input
+                        className="config-paste mono"
+                        type="text"
+                        spellCheck={false}
+                        placeholder="https://example.com/list.txt"
+                        value={pacEditRemoteUrl}
+                        onChange={(e) => setPacEditRemoteUrl(e.target.value)}
+                      />
+                    </div>
+                    <span className="field-hint muted">
+                      {t("pac.remoteUrlHint")}
+                    </span>
+                  </label>
+                  <label className="field">
+                    <span>{t("pac.autoUpdate")}</span>
+                    <div className="pac-auto-row">
+                      <GlassSwitchControl
+                        checked={pacEditAutoUpdate}
+                        ready={pacStatus !== null}
+                        onChange={setPacEditAutoUpdate}
+                      />
+                      <SolidSelect
+                        value={String(pacEditInterval)}
+                        options={pacIntervalOptions}
+                        disabled={!pacEditAutoUpdate || !pacEditRemoteUrl.trim()}
+                        onChange={(v) => setPacEditInterval(Number(v))}
+                      />
+                    </div>
+                    <span className="field-hint muted">
+                      {t("pac.autoUpdateHint")}
+                    </span>
                   </label>
                 </div>
                 <footer className="modal-footer">
-                  <GlassButton onClick={() => setPacRenameGroup(null)}>
+                  <GlassButton onClick={() => setPacEditOpen(false)}>
                     {t("pac.cancel")}
                   </GlassButton>
                   <GlassButton
                     variant="primary"
-                    disabled={!pacRenameName.trim()}
-                    onClick={() => {
-                      if (pacRenameGroup) {
-                        renamePacGroup(pacRenameGroup, pacRenameName);
-                        setPacRenameGroup(null);
-                      }
-                    }}
+                    disabled={!pacEditName.trim()}
+                    onClick={() =>
+                      savePacGroup(
+                        pacEditGroup,
+                        pacEditName,
+                        pacEditRemoteUrl,
+                        pacEditAutoUpdate,
+                        pacEditInterval,
+                      )
+                    }
                   >
                     {t("pac.confirm")}
                   </GlassButton>
@@ -2708,60 +2750,29 @@ export function SettingsPage() {
             </div>
           )}
 
-          {pacSettingsOpen && (
+          {pacPortOpen && (
             <div
               className="modal-backdrop"
               role="dialog"
               aria-modal="true"
-              onClick={() => setPacSettingsOpen(false)}
+              onClick={() => setPacPortOpen(false)}
             >
               <div
                 className="modal pac-settings-modal"
                 onClick={(e) => e.stopPropagation()}
               >
                 <header className="modal-header">
-                  <h2>{t("pac.updateSettings")}</h2>
+                  <h2>{t("pac.portTitle")}</h2>
                   <button
                     type="button"
                     className="icon-btn"
-                    onClick={() => setPacSettingsOpen(false)}
+                    onClick={() => setPacPortOpen(false)}
                     aria-label={t("pac.close")}
                   >
                     ×
                   </button>
                 </header>
                 <div className="modal-body pac-settings-body">
-                  <label className="field">
-                    <span>{t("pac.sourcePreset")}</span>
-                    <SolidSelect
-                      value={
-                        pacPresets.find((p) => p.url === pacSourceUrl)?.id ??
-                        "custom"
-                      }
-                      options={[
-                        ...pacPresets.map((p) => ({
-                          value: p.id,
-                          label: p.label,
-                        })),
-                        { value: "custom", label: t("pac.sourceCustom") },
-                      ]}
-                      onChange={(id) => {
-                        const preset = pacPresets.find((p) => p.id === id);
-                        if (preset) setPacSourceUrl(preset.url);
-                      }}
-                    />
-                  </label>
-                  <label className="field">
-                    <span>{t("pac.sourceTitle")}</span>
-                    <input
-                      className="config-paste mono"
-                      type="text"
-                      spellCheck={false}
-                      value={pacSourceUrl}
-                      onChange={(e) => setPacSourceUrl(e.target.value)}
-                    />
-                    <span className="field-hint muted">{t("pac.sourceHint")}</span>
-                  </label>
                   <label className="field">
                     <span>{t("pac.port")}</span>
                     <input
@@ -2774,34 +2785,41 @@ export function SettingsPage() {
                     />
                     <span className="field-hint muted">{t("pac.portHint")}</span>
                   </label>
-                  <label className="field">
-                    <span>{t("pac.autoUpdate")}</span>
-                    <div className="pac-auto-row">
-                      <GlassSwitchControl
-                        checked={pacAutoUpdate}
-                        ready={pacStatus !== null}
-                        onChange={setPacAutoUpdate}
-                      />
-                      <SolidSelect
-                        value={String(pacIntervalHours)}
-                        options={pacIntervalOptions}
-                        disabled={!pacAutoUpdate}
-                        onChange={(v) => setPacIntervalHours(Number(v))}
-                      />
-                    </div>
-                    <span className="field-hint muted">
-                      {t("pac.autoUpdateHint")}
-                    </span>
-                  </label>
                 </div>
                 <footer className="modal-footer">
-                  <GlassButton onClick={() => setPacSettingsOpen(false)}>
+                  <GlassButton onClick={() => setPacPortOpen(false)}>
                     {t("pac.cancel")}
                   </GlassButton>
                   <GlassButton
                     variant="primary"
                     disabled={pacSettingsSaving}
-                    onClick={() => void savePacSettings()}
+                    onClick={async () => {
+                      const port = Number.parseInt(pacPort, 10);
+                      if (!Number.isFinite(port) || port < 1 || port > 65535) {
+                        setPacError(t("pac.portInvalid"));
+                        return;
+                      }
+                      setPacSettingsSaving(true);
+                      setPacError(null);
+                      try {
+                        const status = await updatePacSettings({
+                          sourceUrl: pacSourceUrl || pacStatus?.source_url || "",
+                          autoUpdate: pacAutoUpdate,
+                          updateIntervalHours: pacIntervalHours,
+                          pacPort: port,
+                        });
+                        setPacStatus(status);
+                        setPacPortOpen(false);
+                      } catch (e) {
+                        setPacError(
+                          t("pac.settingsError", {
+                            err: typeof e === "string" ? e : String(e),
+                          }),
+                        );
+                      } finally {
+                        setPacSettingsSaving(false);
+                      }
+                    }}
                   >
                     {pacSettingsSaving
                       ? t("pac.saving")

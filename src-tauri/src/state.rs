@@ -1989,6 +1989,44 @@ impl AppState {
         Ok(out)
     }
 
+    /// 拉取指定分组的远程地址，替换该分组的 `items`。
+    ///
+    /// 仅对配置了 `remote_url` 的自定义分组有效；内置 gfwlist 分组仍走
+    /// [`Self::refresh_gfwlist`]（更新 `gfwlist_domains`）。网络拉取在锁外完成。
+    pub fn refresh_pac_group(&self, group_id: &str) -> AppResult<crate::pac::PacList> {
+        let url = self.with_store(|store| {
+            Ok(store
+                .settings
+                .pac_list
+                .groups
+                .iter()
+                .find(|g| g.id == group_id)
+                .and_then(|g| g.remote_url.clone())
+                .ok_or_else(|| {
+                    crate::error::AppError::Config("该分组没有配置远程地址".into())
+                })?)
+        })?;
+        let fetched = fetch_gfwlist_blocking(&url)?;
+
+        let mut runtime = self.lock_runtime();
+        let _persistence = self.lock_store_persistence();
+        let mut store = self.lock_store();
+        let group = store
+            .settings
+            .pac_list
+            .groups
+            .iter_mut()
+            .find(|g| g.id == group_id)
+            .ok_or_else(|| crate::error::AppError::Config("分组不存在".into()))?;
+        group.items = fetched;
+        let out = store.settings.pac_list.clone();
+        store.save(&self.store_path)?;
+        if runtime.pac_active {
+            runtime.refresh_pac_content(&store)?;
+        }
+        Ok(out)
+    }
+
     /// PAC 功能状态快照。
     pub fn pac_status(&self) -> AppResult<PacStatus> {
         let runtime = self.lock_runtime();

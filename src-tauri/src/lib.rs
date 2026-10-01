@@ -493,6 +493,7 @@ pub fn run() {
             commands::get_pac_list,
             commands::update_pac_list,
             commands::refresh_gfwlist,
+            commands::refresh_pac_group,
             commands::get_pac_status,
             commands::list_pac_source_presets,
             commands::update_pac_settings,
