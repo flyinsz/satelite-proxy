@@ -59,6 +59,25 @@ pub fn source_presets() -> Vec<PacSourcePreset> {
         .collect()
 }
 
+/// 一个可独立启用的名单分组（对应规则页的「规则集」）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PacGroup {
+    /// 分组唯一 ID（前端生成，形如 group-<ts>）。
+    pub id: String,
+    /// 显示名。
+    pub name: String,
+    /// 是否参与 PAC 生成。
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 条目（后缀域名列表，语义同 `domains`）。
+    #[serde(default)]
+    pub items: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// PAC 名单。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PacList {
@@ -75,24 +94,55 @@ pub struct PacList {
     pub suffixes: Vec<String>,
     /// 地区预置（如 hk / tw）——解析为预置 IP 段参与匹配。
     pub regions: Vec<String>,
+    /// 自定义分组（每个分组独立启用，可增删改名）。
+    #[serde(default)]
+    pub groups: Vec<PacGroup>,
 }
 
 impl PacList {
-    /// 参与生成 PAC 脚本的全部域名（自定义 + 上游，保持顺序去重）。
+    /// 某内置分类是否启用：由 `groups` 中同 id 的条目决定；缺失视为启用
+    /// （兼容旧存储没有 `groups` 字段的情况）。
+    pub fn group_enabled(&self, id: &str) -> bool {
+        self.groups
+            .iter()
+            .find(|g| g.id == id)
+            .map(|g| g.enabled)
+            .unwrap_or(true)
+    }
+
+    /// 参与生成 PAC 脚本的全部域名（自定义 + 上游 + 启用的自定义分组，保持顺序去重）。
+    ///
+    /// 内置 `domains` / `gfwlist_domains` 两类的开关也在此生效：关闭后对应
+    /// 条目不再进入脚本，与 ip_cidrs / suffixes / regions 行为一致。
     pub fn all_domains(&self) -> Vec<String> {
         let mut seen = std::collections::HashSet::new();
-        self.domains
-            .iter()
-            .chain(self.gfwlist_domains.iter())
-            .filter_map(|d| {
+        let mut out: Vec<String> = Vec::new();
+
+        if self.group_enabled("domains") {
+            for d in &self.domains {
                 let d = d.trim();
-                if d.is_empty() || !seen.insert(d.to_string()) {
-                    None
-                } else {
-                    Some(d.to_string())
+                if !d.is_empty() && seen.insert(d.to_string()) {
+                    out.push(d.to_string());
                 }
-            })
-            .collect()
+            }
+        }
+        if self.group_enabled("gfwlist_domains") {
+            for d in &self.gfwlist_domains {
+                let d = d.trim();
+                if !d.is_empty() && seen.insert(d.to_string()) {
+                    out.push(d.to_string());
+                }
+            }
+        }
+        for g in self.groups.iter().filter(|g| g.enabled) {
+            for d in &g.items {
+                let d = d.trim();
+                if !d.is_empty() && seen.insert(d.to_string()) {
+                    out.push(d.to_string());
+                }
+            }
+        }
+        out
     }
 
     /// 生成 PAC 规则时用的总域名数。
@@ -126,6 +176,38 @@ mod tests {
         let list: PacList = serde_json::from_str(legacy).unwrap();
         assert!(list.gfwlist_domains.is_empty());
         assert_eq!(list.all_domains(), vec!["a.com"]);
+    }
+
+    #[test]
+    fn all_domains_respects_builtin_enable_flags() {
+        // 关闭 domains / gfwlist_domains 内置分类后，对应条目不再参与生成。
+        let list = PacList {
+            domains: vec!["custom.com".into()],
+            gfwlist_domains: vec!["upstream.com".into()],
+            groups: vec![
+                PacGroup {
+                    id: "domains".into(),
+                    name: "domains".into(),
+                    enabled: false,
+                    items: vec![],
+                },
+                PacGroup {
+                    id: "gfwlist_domains".into(),
+                    name: "gfwlist_domains".into(),
+                    enabled: false,
+                    items: vec![],
+                },
+            ],
+            ..PacList::default()
+        };
+        assert_eq!(list.all_domains(), Vec::<String>::new());
+
+        // 缺 groups 字段（旧存储）时默认启用，兼容不破坏。
+        let legacy = PacList {
+            domains: vec!["custom.com".into()],
+            ..PacList::default()
+        };
+        assert_eq!(legacy.all_domains(), vec!["custom.com"]);
     }
 
     #[test]

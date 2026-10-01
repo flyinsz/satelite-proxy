@@ -24,6 +24,7 @@ pub fn generate_pac(list: &PacList, proxy_host: &str, proxy_port: u16) -> String
 
     // 域名（后缀匹配）：统一去前导点、加一个点前缀。
     // 自定义域名与 gfwlist 上游域名合并去重后再生成，避免重复规则。
+    // 自定义分组（custom_*）里的条目按域名后缀处理。
     for domain in list.all_domains() {
         let d = normalize_dot_domain(&domain);
         if !d.is_empty() {
@@ -34,37 +35,43 @@ pub fn generate_pac(list: &PacList, proxy_host: &str, proxy_port: u16) -> String
     }
 
     // IP / CIDR。
-    for item in &list.ip_cidrs {
-        if item.contains('/') {
-            if let Some((ip, mask)) = split_cidr(item) {
-                rules.push(format!(
-                    "    if (isInNet(host, \"{ip}\", \"{mask}\")) return PROXY;"
-                ));
+    if list.group_enabled("ip_cidrs") {
+        for item in &list.ip_cidrs {
+            if item.contains('/') {
+                if let Some((ip, mask)) = split_cidr(item) {
+                    rules.push(format!(
+                        "    if (isInNet(host, \"{ip}\", \"{mask}\")) return PROXY;"
+                    ));
+                }
+            } else if is_valid_ipv4(item.trim()) {
+                let ip = item.trim();
+                rules.push(format!("    if (host == \"{ip}\") return PROXY;"));
             }
-        } else if is_valid_ipv4(item.trim()) {
-            let ip = item.trim();
-            rules.push(format!("    if (host == \"{ip}\") return PROXY;"));
+            // 无法解析的条目跳过。
         }
-        // 无法解析的条目跳过。
     }
 
     // 顶级后缀：.hk / .tw 之类。
-    for suffix in &list.suffixes {
-        let s = normalize_dot_domain(suffix);
-        if !s.is_empty() {
-            rules.push(format!(
-                "    if (dnsDomainIs(host, \".{s}\")) return PROXY;"
-            ));
+    if list.group_enabled("suffixes") {
+        for suffix in &list.suffixes {
+            let s = normalize_dot_domain(suffix);
+            if !s.is_empty() {
+                rules.push(format!(
+                    "    if (dnsDomainIs(host, \".{s}\")) return PROXY;"
+                ));
+            }
         }
     }
 
     // 地区预置：展开为预置 IP 段逐个生成 isInNet。
-    for region in &list.regions {
-        for cidr in region_cidrs(region) {
-            if let Some((ip, mask)) = split_cidr(cidr) {
-                rules.push(format!(
-                    "    if (isInNet(host, \"{ip}\", \"{mask}\")) return PROXY;"
-                ));
+    if list.group_enabled("regions") {
+        for region in &list.regions {
+            for cidr in region_cidrs(region) {
+                if let Some((ip, mask)) = split_cidr(cidr) {
+                    rules.push(format!(
+                        "    if (isInNet(host, \"{ip}\", \"{mask}\")) return PROXY;"
+                    ));
+                }
             }
         }
     }
@@ -90,28 +97,34 @@ pub fn generate_pac(list: &PacList, proxy_host: &str, proxy_port: u16) -> String
 pub fn count_pac_rules(list: &PacList) -> usize {
     let mut count = list.all_domains().len();
 
-    for item in &list.ip_cidrs {
-        let valid = if item.contains('/') {
-            split_cidr(item).is_some()
-        } else {
-            is_valid_ipv4(item.trim())
-        };
-        if valid {
-            count += 1;
+    if list.group_enabled("ip_cidrs") {
+        for item in &list.ip_cidrs {
+            let valid = if item.contains('/') {
+                split_cidr(item).is_some()
+            } else {
+                is_valid_ipv4(item.trim())
+            };
+            if valid {
+                count += 1;
+            }
         }
     }
 
-    for suffix in &list.suffixes {
-        if !normalize_dot_domain(suffix).is_empty() {
-            count += 1;
+    if list.group_enabled("suffixes") {
+        for suffix in &list.suffixes {
+            if !normalize_dot_domain(suffix).is_empty() {
+                count += 1;
+            }
         }
     }
 
-    for region in &list.regions {
-        count += region_cidrs(region)
-            .iter()
-            .filter(|cidr| split_cidr(cidr).is_some())
-            .count();
+    if list.group_enabled("regions") {
+        for region in &list.regions {
+            count += region_cidrs(region)
+                .iter()
+                .filter(|cidr| split_cidr(cidr).is_some())
+                .count();
+        }
     }
 
     count
@@ -217,6 +230,7 @@ mod tests {
             ip_cidrs: vec!["1.2.3.4".into(), "10.0.0.0/8".into(), "bad/garbage".into()],
             suffixes: vec![".githubusercontent.com".into(), String::new()],
             regions: vec!["hk".into(), "unknown".into()],
+            ..PacList::default()
         };
         let script = generate_pac(&list, "127.0.0.1", 2080);
         let emitted = script

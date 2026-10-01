@@ -568,6 +568,16 @@ export interface PacList {
   ip_cidrs: string[];
   suffixes: string[];
   regions: string[];
+  /** Extra custom groups; the five builtin ids also live here with enabled flags. */
+  groups: PacGroup[];
+}
+
+/** One PAC list group (mirrors the rules page's rule-set card). */
+export interface PacGroup {
+  id: string;
+  name: string;
+  enabled: boolean;
+  items: string[];
 }
 
 /** One built-in gfwlist mirror (list_pac_source_presets). */
