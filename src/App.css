@@ -5756,111 +5756,95 @@ tr.dns-diag-tr:hover {
   cursor: pointer;
 }
 
-/* PAC service status card — compact grid styled after the rules page's
-   remote-set status card instead of the tall settings-form grid. */
-.pac-status-card {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 12px;
-  padding: 12px 14px;
+/* PAC service status — one thin toolbar row above the two-column list,
+   structurally identical to the rules page's toolbar. */
+.pac-status-toolbar {
+  margin-bottom: 0.75rem;
 }
 
-.pac-status-head {
+.pac-status-url {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.7rem;
+}
+
+.pac-status-count {
+  font-size: 0.7rem;
+}
+
+/* Source settings stacked inside the left column (ruleset-list), styled
+   like the rules page's list-actions area. */
+.pac-source-block {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   gap: 0.5rem;
-  flex-wrap: wrap;
+  padding: 0.25rem 0.35rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 0.4rem;
 }
 
-.pac-status-head .sys-proxy-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-}
-
-.pac-status-actions {
-  display: flex;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-/* Two-column compact source controls under the status line. */
-.pac-source-grid {
+.pac-source-row {
   display: grid;
-  grid-template-columns: minmax(9rem, 0.7fr) minmax(0, 1.4fr);
-  gap: 0.6rem 0.9rem;
-  align-items: start;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  align-items: end;
 }
 
-.pac-source-grid .pac-source-preset,
-.pac-source-grid .pac-auto-field,
-.pac-source-grid .pac-port-field {
-  min-width: 0;
-}
-
-.pac-source-grid .pac-source-url {
-  grid-row: span 2;
-  min-width: 0;
-}
-
-.pac-source-grid .field {
+.pac-source-block .field {
   display: flex;
   flex-direction: column;
   gap: 0.3rem;
   font-size: 0.8rem;
   color: var(--muted);
+  min-width: 0;
 }
 
-.pac-source-grid .field > span:first-child {
+.pac-source-block .field > span:first-child {
   font-family: var(--mono);
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   font-weight: 600;
 }
 
-.pac-source-grid .field input,
-.pac-source-grid .field select {
-  padding: 0.4rem 0.55rem;
-  font-size: 0.85rem;
+.pac-source-block .field input,
+.pac-source-block .field select {
+  padding: 0.35rem 0.5rem;
+  font-size: 0.82rem;
   border-radius: var(--radius);
   background: var(--input-bg, var(--panel-elevated));
   border: 1px solid var(--input-border, var(--border));
   color: var(--text);
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
-.pac-source-grid .field input:focus,
-.pac-source-grid .field select:focus {
+.pac-source-block .field input:focus,
+.pac-source-block .field select:focus {
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 2px var(--primary-glow);
 }
 
-.pac-source-grid .field-hint {
-  font-size: 0.72rem;
+.pac-source-block .field-hint {
+  font-size: 0.7rem;
   line-height: 1.4;
 }
 
 .pac-auto-row {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.5rem;
+  flex-wrap: wrap;
 }
 
 .pac-source-save {
-  grid-column: 1 / -1;
   display: flex;
   gap: 0.4rem;
-}
-
-@media (max-width: 640px) {
-  .pac-source-grid {
-    grid-template-columns: 1fr;
-  }
-  .pac-source-grid .pac-source-url {
-    grid-row: auto;
-  }
+  justify-content: flex-end;
 }
 
 .pac-preview-modal {
