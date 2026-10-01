@@ -2115,10 +2115,11 @@ export function SettingsPage() {
             <div className="field-hint muted">{t("common.loading")}</div>
           ) : (
             <>
-              {/* ---- Service status: one thin toolbar row, like the rules
-                     page's toolbar — no tall form card above the list ---- */}
-              <div className="rules-toolbar card pac-status-toolbar">
-                <div className="header-actions rules-main-actions">
+              {/* ---- Top card: status toolbar + source form as one tidy
+                     block; the two-column list below keeps the rules-page
+                     skeleton. ---- */}
+              <div className="card pac-top-card">
+                <div className="header-actions rules-main-actions pac-toolbar-row">
                   <div className="rules-policy-control">
                     <span className="muted rules-policy-label">{t("pac.status")}</span>
                     <span className={`pill${pacStatus?.enabled ? " ok" : ""}`}>
@@ -2167,91 +2168,87 @@ export function SettingsPage() {
                     </GlassButton>
                   </div>
                 </div>
+
+                {/* Source form — 4 equal columns (preset · port · url ·
+                    auto-update), labels above inputs, save on its own
+                    right-aligned row. */}
+                <div className="pac-form-grid">
+                  <label className="field">
+                    <span>{t("pac.sourcePreset")}</span>
+                    <SolidSelect
+                      value={
+                        pacPresets.find((p) => p.url === pacSourceUrl)?.id ??
+                        "custom"
+                      }
+                      options={[
+                        ...pacPresets.map((p) => ({
+                          value: p.id,
+                          label: p.label,
+                        })),
+                        { value: "custom", label: t("pac.sourceCustom") },
+                      ]}
+                      onChange={(id) => {
+                        const preset = pacPresets.find((p) => p.id === id);
+                        if (preset) setPacSourceUrl(preset.url);
+                      }}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>{t("pac.port")}</span>
+                    <input
+                      className="config-paste mono"
+                      type="number"
+                      min={1}
+                      max={65535}
+                      value={pacPort}
+                      onChange={(e) => setPacPort(e.target.value)}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>{t("pac.sourceTitle")}</span>
+                    <input
+                      className="config-paste mono"
+                      type="text"
+                      spellCheck={false}
+                      value={pacSourceUrl}
+                      onChange={(e) => setPacSourceUrl(e.target.value)}
+                    />
+                    <span className="field-hint muted">{t("pac.sourceHint")}</span>
+                  </label>
+                  <label className="field">
+                    <span>{t("pac.autoUpdate")}</span>
+                    <div className="pac-auto-row">
+                      <GlassSwitchControl
+                        checked={pacAutoUpdate}
+                        ready={pacStatus !== null}
+                        onChange={setPacAutoUpdate}
+                      />
+                      <SolidSelect
+                        value={String(pacIntervalHours)}
+                        options={pacIntervalOptions}
+                        disabled={!pacAutoUpdate}
+                        onChange={(v) => setPacIntervalHours(Number(v))}
+                      />
+                    </div>
+                  </label>
+                </div>
+
+                <div className="pac-form-foot">
+                  <GlassButton
+                    icon="💾"
+                    disabled={pacSettingsSaving}
+                    onClick={() => void savePacSettings()}
+                  >
+                    {pacSettingsSaving
+                      ? t("pac.saving")
+                      : t("pac.settingsSave")}
+                  </GlassButton>
+                </div>
               </div>
 
-              {/* ---- Two-column layout: left = source settings + categories,
-                     right = entry table (same skeleton as the rules page) ---- */}
+              {/* ---- Two-column list: categories + entry table ---- */}
               <div className="rules-layout">
                 <aside className="card ruleset-list rules-route-list">
-                  {/* Source settings — compact 2-col grid (preset+port / url /
-                      auto-update), kept short so the category list dominates. */}
-                  <div className="pac-source-block">
-                    <div className="pac-source-row">
-                      <label className="field">
-                        <span>{t("pac.sourcePreset")}</span>
-                        <SolidSelect
-                          value={
-                            pacPresets.find((p) => p.url === pacSourceUrl)?.id ??
-                            "custom"
-                          }
-                          options={[
-                            ...pacPresets.map((p) => ({
-                              value: p.id,
-                              label: p.label,
-                            })),
-                            { value: "custom", label: t("pac.sourceCustom") },
-                          ]}
-                          onChange={(id) => {
-                            const preset = pacPresets.find((p) => p.id === id);
-                            if (preset) setPacSourceUrl(preset.url);
-                          }}
-                        />
-                      </label>
-                      <label className="field">
-                        <span>{t("pac.port")}</span>
-                        <input
-                          className="config-paste mono"
-                          type="number"
-                          min={1}
-                          max={65535}
-                          value={pacPort}
-                          onChange={(e) => setPacPort(e.target.value)}
-                        />
-                      </label>
-                    </div>
-                    <label className="field">
-                      <span>{t("pac.sourceTitle")}</span>
-                      <input
-                        className="config-paste mono"
-                        type="text"
-                        spellCheck={false}
-                        value={pacSourceUrl}
-                        onChange={(e) => setPacSourceUrl(e.target.value)}
-                      />
-                      <span className="field-hint muted">{t("pac.sourceHint")}</span>
-                    </label>
-                    <div className="pac-source-row">
-                      <label className="field">
-                        <span>{t("pac.autoUpdate")}</span>
-                        <div className="pac-auto-row">
-                          <GlassSwitchControl
-                            checked={pacAutoUpdate}
-                            ready={pacStatus !== null}
-                            onChange={setPacAutoUpdate}
-                          />
-                          <SolidSelect
-                            value={String(pacIntervalHours)}
-                            options={pacIntervalOptions}
-                            disabled={!pacAutoUpdate}
-                            onChange={(v) => setPacIntervalHours(Number(v))}
-                          />
-                        </div>
-                      </label>
-                      <div className="pac-source-save">
-                        <GlassButton
-                          icon="💾"
-                          variant="primary"
-                          disabled={pacSettingsSaving}
-                          onClick={() => void savePacSettings()}
-                        >
-                          {pacSettingsSaving
-                            ? t("pac.saving")
-                            : t("pac.settingsSave")}
-                        </GlassButton>
-                      </div>
-                    </div>
-                  </div>
-
                   <div className="ruleset-list-title">{t("pac.listTitle")}</div>
                   {pacGroups.map((g) => (
                     <div
