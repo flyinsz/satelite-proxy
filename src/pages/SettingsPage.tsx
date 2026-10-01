@@ -2130,6 +2130,14 @@ export function SettingsPage() {
                         {pacStatus.url}
                       </code>
                     )}
+                    {pacStatus?.port ? (
+                      <>
+                        <span className="muted rules-policy-label"> · </span>
+                        <span className="mono pac-status-port">
+                          {t("pac.port")}: {pacStatus.port}
+                        </span>
+                      </>
+                    ) : null}
                     <span className="muted rules-policy-label"> · </span>
                     <span className="mono pac-status-count">
                       {t("pac.ruleCount", { n: pacStatus?.rule_count ?? 0 })}
@@ -2169,9 +2177,9 @@ export function SettingsPage() {
                   </div>
                 </div>
 
-                {/* Source form — 4 equal columns (preset · port · url ·
-                    auto-update), labels above inputs, save on its own
-                    right-aligned row. */}
+                {/* Source form — row 1: mirror preset + update URL;
+                    row 2: auto-update toggle · last update · save.
+                    PAC port is shown read-only in the status row above. */}
                 <div className="pac-form-grid">
                   <label className="field">
                     <span>{t("pac.sourcePreset")}</span>
@@ -2194,17 +2202,6 @@ export function SettingsPage() {
                     />
                   </label>
                   <label className="field">
-                    <span>{t("pac.port")}</span>
-                    <input
-                      className="config-paste mono"
-                      type="number"
-                      min={1}
-                      max={65535}
-                      value={pacPort}
-                      onChange={(e) => setPacPort(e.target.value)}
-                    />
-                  </label>
-                  <label className="field">
                     <span>{t("pac.sourceTitle")}</span>
                     <input
                       className="config-paste mono"
@@ -2215,7 +2212,10 @@ export function SettingsPage() {
                     />
                     <span className="field-hint muted">{t("pac.sourceHint")}</span>
                   </label>
-                  <label className="field">
+                </div>
+
+                <div className="pac-form-foot">
+                  <label className="field pac-auto-field">
                     <span>{t("pac.autoUpdate")}</span>
                     <div className="pac-auto-row">
                       <GlassSwitchControl
@@ -2231,11 +2231,17 @@ export function SettingsPage() {
                       />
                     </div>
                   </label>
-                </div>
-
-                <div className="pac-form-foot">
+                  <div className="field pac-update-field">
+                    <span>{t("pac.lastUpdate")}</span>
+                    <span className="mono pac-update-time">
+                      {pacStatus?.last_update
+                        ? new Date(pacStatus.last_update * 1000).toLocaleString()
+                        : t("pac.never")}
+                    </span>
+                  </div>
                   <GlassButton
                     icon="💾"
+                    className="pac-save-btn"
                     disabled={pacSettingsSaving}
                     onClick={() => void savePacSettings()}
                   >

@@ -5790,11 +5790,17 @@ tr.dns-diag-tr:hover {
   white-space: nowrap;
 }
 
-/* Source form — 4 equal columns, aligned, with a right-aligned footer row
-   holding the settings-save button. */
+.pac-status-port {
+  font-size: 0.7rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Source form — row 1: preset + update URL;
+   row 2 (pac-form-foot): auto-update toggle · last update · save. */
 .pac-form-grid {
   display: grid;
-  grid-template-columns: 1.1fr 0.7fr 2fr 1.2fr;
+  grid-template-columns: 1fr 2fr;
   gap: 0.75rem;
   align-items: end;
   margin-top: 0.75rem;
@@ -5844,10 +5850,42 @@ tr.dns-diag-tr:hover {
   line-height: 1.4;
 }
 
+/* Row 2: auto-update | last update | save — spread across the card. */
 .pac-form-foot {
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
+  grid-template-columns: 1fr 1.4fr auto;
+  gap: 0.75rem;
+  align-items: end;
   margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed var(--border);
+}
+
+.pac-form-foot .field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.pac-form-foot .field > span:first-child {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.pac-update-time {
+  font-size: 0.8rem;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pac-save-btn {
+  justify-self: end;
 }
 
 .pac-auto-row {
@@ -5857,9 +5895,10 @@ tr.dns-diag-tr:hover {
   flex-wrap: wrap;
 }
 
-@media (max-width: 1100px) {
-  .pac-form-grid {
-    grid-template-columns: 1fr 1fr;
+@media (max-width: 900px) {
+  .pac-form-grid,
+  .pac-form-foot {
+    grid-template-columns: 1fr;
   }
 }
 
