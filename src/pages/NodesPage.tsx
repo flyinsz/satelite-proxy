@@ -328,6 +328,17 @@ export function NodesPage() {
     [displayed, groupBy, locale, t],
   );
 
+  // The group holding the currently-selected node, so its header can be
+  // highlighted (订阅/协议/地区 views). Only meaningful when grouping is
+  // active; a pool id or a filtered-away node simply yields null.
+  const activeGroupKey = useMemo(() => {
+    if (!currentId) return null;
+    for (const g of groups) {
+      if (g.nodes.some((n) => n.id === currentId)) return g.key;
+    }
+    return null;
+  }, [groups, currentId]);
+
   // Collapsed group keys, persisted per grouping dimension (keys from one
   // dimension aren't meaningful in another). Default is every group
   // expanded; the user's last collapse state is restored on return.
@@ -852,10 +863,11 @@ export function NodesPage() {
    *  without fighting native <table> row-height rules. */
   function renderGroupRow(item: Extract<ListItem, { type: "group" }>) {
     const open = !collapsedGroups.has(item.key);
+    const active = activeGroupKey === item.key;
     return (
       <div
         key={item.key}
-        className="node-list-group-row"
+        className={`node-list-group-row${active ? " active-group" : ""}`}
         style={{ height: NODE_GROUP_H }}
         onClick={() => toggleGroup(item.key)}
         title={t("nodes.groupToggleHint")}
@@ -863,6 +875,7 @@ export function NodesPage() {
         {/* CSS-drawn caret — the ▾ glyph renders off-center in Segoe UI. */}
         <span className={`node-group-caret${open ? "" : " closed"}`} />
         <span className="node-group-label">
+          {active ? <span className="node-group-active-mark">●</span> : null}
           {item.flag ? <span className="node-group-flag">{item.flag}</span> : null}
           {item.label}
         </span>
@@ -874,16 +887,18 @@ export function NodesPage() {
   /** Slim collapsible group header band (grid), spans all columns. */
   function renderGroupHead(item: Extract<GridItem, { type: "group" }>) {
     const open = !collapsedGroups.has(item.key);
+    const active = activeGroupKey === item.key;
     return (
       <div
         key={item.key}
-        className="node-group-head"
+        className={`node-group-head${active ? " active-group" : ""}`}
         style={{ height: NODE_GROUP_H }}
         onClick={() => toggleGroup(item.key)}
         title={t("nodes.groupToggleHint")}
       >
         <span className={`node-group-caret${open ? "" : " closed"}`} />
         <span className="node-group-label">
+          {active ? <span className="node-group-active-mark">●</span> : null}
           {item.flag ? <span className="node-group-flag">{item.flag}</span> : null}
           {item.label}
         </span>

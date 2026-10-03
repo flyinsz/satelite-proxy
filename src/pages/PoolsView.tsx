@@ -259,6 +259,12 @@ export function PoolsView({
               const isExpanded = expanded.has(p.id);
               const members = poolMembers(p);
               const isCurrentPool = p.id === currentId;
+              // Highlight the pool that holds the current node even when the
+              // selection is a plain member node (not the pool itself), so the
+              // 节点池 view can always locate where the in-use node lives.
+              const containsCurrent =
+                !isCurrentPool && members.some((n) => n.id === currentId);
+              const highlight = isCurrentPool || containsCurrent;
               const activeMember = isCurrentPool ? (poolActiveNode[p.id] ?? null) : null;
               const poolMinLatency =
                 members.length === 0
@@ -272,14 +278,16 @@ export function PoolsView({
               return (
                 <div key={p.id}>
                   <div
-                    className={`node-list-group-row${isCurrentPool ? " row-active" : ""}`}
+                    className={`node-list-group-row${highlight ? " active-group" : ""}`}
                     style={{ height: NODE_GROUP_H }}
                     onClick={() => togglePoolExpand(p.id)}
                     title={t("nodes.groupToggleHint")}
                   >
                     <span className={`node-group-caret${isExpanded ? "" : " closed"}`} />
                     <span className="node-group-label">
-                      {isCurrentPool ? <span style={{ marginRight: 4 }}>●</span> : null}
+                      {highlight ? (
+                        <span className="node-group-active-mark">●</span>
+                      ) : null}
                       {p.name}
                     </span>
                     <span className="pool-strategy">

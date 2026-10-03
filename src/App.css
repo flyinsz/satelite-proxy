@@ -2378,6 +2378,20 @@ button {
   text-align: left;
 }
 
+/* Group header holding the currently-selected node — soft primary wash so
+   the in-use node's group is locatable across 订阅/协议/地区/节点池. */
+.node-list-group-row.active-group,
+.node-group-head.active-group {
+  background: var(--primary-muted);
+}
+
+.node-group-active-mark {
+  color: var(--primary);
+  flex-shrink: 0;
+  font-size: 0.8em;
+  line-height: 1;
+}
+
 .node-group-flag {
   font-size: 1.05em;
   flex-shrink: 0;
