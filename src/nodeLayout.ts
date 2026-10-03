@@ -6,7 +6,7 @@
  *  apart silently. */
 
 /** Slim group header band height (px). */
-export const NODE_GROUP_H = 30;
+export const NODE_GROUP_H = 36;
 
 /** List view column template — shared by the head row and every data row so
  *  they align without relying on native <table> auto-layout (dropped so the

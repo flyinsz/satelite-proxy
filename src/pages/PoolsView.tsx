@@ -339,7 +339,7 @@ export function PoolsView({
                       members.map((n) => (
                         <div
                           key={n.id}
-                          className={`node-list-row${n.id === currentId || n.id === activeMember ? " row-active" : ""}`}
+                          className={`node-list-row node-virtual-row${n.id === currentId || n.id === activeMember ? " row-active" : ""}`}
                           style={{ gridTemplateColumns: NODE_LIST_COLS }}
                           {...nodeTip(n, t)}
                         >
