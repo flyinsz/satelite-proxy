@@ -97,11 +97,33 @@ pub fn build_mihomo_config(
     // ORIGINAL NAME; emission renamed every entry into the tag space, so
     // rewrite the reference to the target's tag. A reference we cannot
     // resolve would make mihomo reject the whole config — drop that node.
-    let raw_name_to_tag: std::collections::HashMap<String, String> = entries
+    //
+    // The target may be a node OR a node pool: chains like cfnew's 家宽链式
+    // point `dialer-proxy` at a `proxy-groups` entry (e.g. "⚡ CF前置"),
+    // which reaches us as a pool created by
+    // `import_subscription_proxy_groups` (same Clash name, emitted under
+    // `pool-<id>`). Pools are matched by name, case-insensitively, mirroring
+    // how the importer looks them up.
+    let mut raw_name_to_tag: std::collections::HashMap<String, String> = entries
         .iter()
         .filter(|(n, _)| n.raw.is_some())
         .map(|(n, _)| (n.name.clone(), outbound_tag(n)))
         .collect();
+    for pool in &opts.pools {
+        if !pool.enabled {
+            continue;
+        }
+        let members =
+            crate::config::builder::pool_member_tags(pool, &supported, &supported.iter().map(outbound_tag).collect::<Vec<_>>());
+        if members.is_empty() {
+            continue;
+        }
+        // First pool wins for a duplicated name, matching the node table
+        // above (later entries would overwrite an earlier mapping).
+        raw_name_to_tag
+            .entry(pool.name.clone())
+            .or_insert_with(|| pool.outbound_tag());
+    }
     let mut proxies: Vec<Mapping> = Vec::new();
     let mut emitted: Vec<ProxyNode> = Vec::new();
     for (node, mut mapping) in entries {
@@ -1648,6 +1670,86 @@ dialer-proxy: 不存在的节点
             Some(back_tag.as_str())
         );
         assert!(!group_members(&doc).iter().any(|m| m == "孤儿"));
+    }
+
+    /// cfnew 家宽链式形状：`dialer-proxy` 指向一个**代理组**（导入后成为节点池）
+    /// 而非单个节点。池以 `pool-<id>` tag 生成为 proxy-group，引用必须解析到
+    /// 该 tag，且目标节点不得被丢弃。
+    #[test]
+    fn dialer_proxy_resolves_to_a_pool_group() {
+        let front = "name: 优选域名-01
+type: vless
+server: f.example.com
+port: 443
+uuid: 11111111-1111-1111-1111-111111111111
+tls: true
+servername: sni.example.com
+";
+        let landing = "name: \"🏠 JP-家宽-01\"
+type: openvpn
+server: 36.14.76.69
+port: 1337
+cipher: AES-256-GCM
+username: vpngw
+password: gwpass
+udp: false
+dialer-proxy: \"⚡ CF前置\"
+";
+        let nodes = vec![
+            raw_node(
+                "优选域名-01",
+                Protocol::Vless,
+                ProtocolConfig::Vless {
+                    uuid: "uuid-1".into(),
+                    flow: None,
+                    packet_encoding: "xudp".into(),
+                },
+                front,
+            ),
+            raw_node(
+                "🏠 JP-家宽-01",
+                Protocol::Unknown,
+                ProtocolConfig::Unknown,
+                landing,
+            ),
+        ];
+
+        // The pool mirrors the clash proxy-group: same name, url-test strategy,
+        // explicit membership of the front node.
+        let pool = crate::domain::NodePool {
+            strategy: crate::domain::PoolStrategy::UrlTest,
+            ..crate::domain::NodePool::new(
+                "⚡ CF前置",
+                crate::domain::PoolMode::Explicit {
+                    node_ids: vec![nodes[0].id.clone()],
+                },
+            )
+        };
+        let mut opts = default_opts();
+        opts.pools = vec![pool.clone()];
+
+        let built = build_mihomo_config(&nodes, &opts).expect("build");
+        let doc = parse(&built);
+        let proxies = proxies_of(&doc);
+
+        // The landing node survives (its dialer-proxy now resolves).
+        let landing_entry = proxies
+            .iter()
+            .find(|p| p["server"].as_str() == Some("36.14.76.69"))
+            .expect("家宽节点应保留");
+        assert_eq!(
+            landing_entry["dialer-proxy"].as_str(),
+            Some(pool.outbound_tag().as_str()),
+            "dialer-proxy 应指向池 tag"
+        );
+
+        // And that tag really exists as a proxy-group.
+        assert!(
+            groups_of(&doc)
+                .iter()
+                .any(|g| g["name"].as_str() == Some(pool.outbound_tag().as_str())),
+            "池必须以 proxy-group 形式存在"
+        );
     }
 
     fn rules_of(doc: &serde_yaml::Value) -> Vec<String> {
