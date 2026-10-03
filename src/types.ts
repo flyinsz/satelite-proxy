@@ -570,6 +570,10 @@ export interface PacList {
   regions: string[];
   /** Extra custom groups; the five builtin ids also live here with enabled flags. */
   groups: PacGroup[];
+  /** China-direct domains (suffix match), used by the 「大陆以外」 reverse mode. */
+  china_domains: string[];
+  /** China IP CIDRs (chnroute), used by the reverse mode. */
+  china_ip_cidrs: string[];
 }
 
 /** One PAC list group (mirrors the rules page's rule-set card). */
@@ -610,6 +614,10 @@ export interface PacStatus {
   update_interval_hours: number;
   /** Generated PAC matching rules (domains + IPs + suffixes + regions). */
   rule_count: number;
+  /** Reverse 「大陆以外」 mode: China-direct + default proxy. */
+  china_direct: boolean;
+  /** Loaded China-direct rules count (domains + IP CIDRs). */
+  china_count: number;
 }
 
 /** Extra sing-box inbound listener (settings-managed). */

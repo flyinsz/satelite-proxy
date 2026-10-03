@@ -37,6 +37,10 @@ pub struct PacStatus {
     pub update_interval_hours: u32,
     /// PAC 脚本生成的规则条数（域名 + IP + 后缀 + 地区展开）。
     pub rule_count: usize,
+    /// 反向「大陆以外」模式（中国直连，其余默认代理）。
+    pub china_direct: bool,
+    /// 反向模式下已载入的中国直连规则条数（域名 + IP 段）。
+    pub china_count: usize,
 }
 
 const KERNEL_SELECTION_POLL_INTERVAL: Duration = Duration::from_secs(2);
@@ -1989,6 +1993,27 @@ impl AppState {
         Ok(out)
     }
 
+    /// 拉取「中国直连」数据（chnroute 中国 IP 段 + 中国域名），整体替换
+    /// `china_ip_cidrs` / `china_domains`。供反向「大陆以外」模式使用。
+    ///
+    /// 网络拉取在锁外完成（最多 30s），与 [`Self::refresh_gfwlist`] 一致。
+    pub fn refresh_china_routes(&self) -> AppResult<crate::pac::PacList> {
+        let ips = fetch_plain_list_blocking(crate::pac::CHINA_IPV4_URL)?;
+        let domains = fetch_plain_list_blocking(crate::pac::CHINA_DOMAINS_URL)?;
+
+        let mut runtime = self.lock_runtime();
+        let _persistence = self.lock_store_persistence();
+        let mut store = self.lock_store();
+        store.settings.pac_list.china_ip_cidrs = ips;
+        store.settings.pac_list.china_domains = domains;
+        let out = store.settings.pac_list.clone();
+        store.save(&self.store_path)?;
+        if runtime.pac_active {
+            runtime.refresh_pac_content(&store)?;
+        }
+        Ok(out)
+    }
+
     /// 拉取指定分组的远程地址，替换该分组的 `items`。
     ///
     /// 仅对配置了 `remote_url` 的自定义分组有效；内置 gfwlist 分组仍走
@@ -2031,6 +2056,7 @@ impl AppState {
     pub fn pac_status(&self) -> AppResult<PacStatus> {
         let runtime = self.lock_runtime();
         let store = self.lock_store();
+        let china_direct = store.settings.pac_china_direct;
         Ok(PacStatus {
             kind: store.settings.system_proxy_kind.as_str().to_string(),
             enabled: runtime.pac_active,
@@ -2046,7 +2072,13 @@ impl AppState {
             source_url: store.settings.pac_source_url.clone(),
             auto_update: store.settings.pac_auto_update,
             update_interval_hours: store.settings.pac_update_interval_hours,
-            rule_count: crate::pac::generator::count_pac_rules(&store.settings.pac_list),
+            rule_count: crate::pac::generator::count_pac_rules(
+                &store.settings.pac_list,
+                china_direct,
+            ),
+            china_direct,
+            china_count: store.settings.pac_list.china_domains.len()
+                + store.settings.pac_list.china_ip_cidrs.len(),
         })
     }
 
@@ -2058,19 +2090,22 @@ impl AppState {
             &store.settings.pac_list,
             "127.0.0.1",
             port,
+            store.settings.pac_china_direct,
         ))
     }
 
-    /// 更新 PAC 相关设置（更新地址 / 自动更新 / 间隔 / 端口）。
+    /// 更新 PAC 相关设置（更新地址 / 自动更新 / 间隔 / 端口 / 反向模式）。
     ///
-    /// `pac_port` 变更且 PAC 服务正在运行时重建服务，使新端口立即生效。
-    /// 端口占用等失败会返回错误，但设置已持久化（与 `set_pac_list` 一致）。
+    /// `pac_port` 或 `china_direct` 变更且 PAC 服务正在运行时重建服务，使
+    /// 新配置立即生效。端口占用等失败会返回错误，但设置已持久化（与
+    /// `set_pac_list` 一致）。
     pub fn update_pac_settings(
         &self,
         source_url: Option<String>,
         auto_update: Option<bool>,
         update_interval_hours: Option<u32>,
         pac_port: Option<u16>,
+        china_direct: Option<bool>,
     ) -> AppResult<PacStatus> {
         let mut runtime = self.lock_runtime();
         let _persistence = self.lock_store_persistence();
@@ -2114,9 +2149,17 @@ impl AppState {
             }
         }
 
+        let mut mode_changed = false;
+        if let Some(v) = china_direct {
+            if v != store.settings.pac_china_direct {
+                store.settings.pac_china_direct = v;
+                mode_changed = true;
+            }
+        }
+
         store.save(&self.store_path)?;
-        // 端口变更且 PAC 服务在跑：重建服务并重指系统代理。
-        if port_changed && runtime.pac_active {
+        // 端口/模式变更且 PAC 服务在跑：重建服务并重指系统代理。
+        if (port_changed || mode_changed) && runtime.pac_active {
             runtime.refresh_pac_content(&store)?;
             runtime.set_system_proxy(&store, false)?;
             runtime.set_system_proxy(&store, true)?;
@@ -2136,7 +2179,13 @@ impl AppState {
             source_url: store.settings.pac_source_url.clone(),
             auto_update: store.settings.pac_auto_update,
             update_interval_hours: store.settings.pac_update_interval_hours,
-            rule_count: crate::pac::generator::count_pac_rules(&store.settings.pac_list),
+            rule_count: crate::pac::generator::count_pac_rules(
+                &store.settings.pac_list,
+                store.settings.pac_china_direct,
+            ),
+            china_direct: store.settings.pac_china_direct,
+            china_count: store.settings.pac_list.china_domains.len()
+                + store.settings.pac_list.china_ip_cidrs.len(),
         })
     }
 
@@ -2433,6 +2482,39 @@ fn fetch_gfwlist_blocking(url: &str) -> AppResult<Vec<String>> {
             let text = crate::pac::gfwlist::decode_gfwlist_body(&body)
                 .map_err(crate::error::AppError::Fetch)?;
             Ok(crate::pac::gfwlist::parse_gfwlist_text(&text))
+        }
+    }
+}
+
+/// 阻塞式拉取纯文本列表（每行一条，如 chnroute 中国 IP 段 / 中国域名）。
+///
+/// 与 [`fetch_gfwlist_blocking`] 同构：reqwest 失败回退 ureq。
+fn fetch_plain_list_blocking(url: &str) -> AppResult<Vec<String>> {
+    match tauri::async_runtime::block_on(crate::pac::gfwlist::fetch_plain_list(url)) {
+        Ok(items) => Ok(items),
+        Err(reqwest_err) => {
+            app_log::warn(
+                "pac",
+                format!("reqwest list fetch failed ({reqwest_err}); falling back to ureq"),
+            );
+            let body = ureq::get(url)
+                .timeout(Duration::from_secs(30))
+                .call()
+                .map_err(|error| {
+                    crate::error::AppError::Fetch(format!("fetch list via ureq: {error}"))
+                })?
+                .into_string()
+                .map_err(|error| {
+                    crate::error::AppError::Fetch(format!("read list body: {error}"))
+                })?;
+            Ok(body
+                .lines()
+                .map(str::trim)
+                .filter(|line| {
+                    !line.is_empty() && !line.starts_with('#') && !line.starts_with('!')
+                })
+                .map(str::to_string)
+                .collect())
         }
     }
 }

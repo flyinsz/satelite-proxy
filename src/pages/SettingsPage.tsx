@@ -19,6 +19,7 @@ import {
   getSettings,
   refreshGfwlist,
   refreshPacGroup,
+  refreshChinaRoutes,
   regenerateApiSecret,
   restartProxy,
   setCoreType,
@@ -250,6 +251,8 @@ export function SettingsPage() {
   const [pacPort, setPacPort] = useState("");
   const [pacSettingsSaving, setPacSettingsSaving] = useState(false);
   const [pacClearing, setPacClearing] = useState(false);
+  /** Pulling the China-direct (chnroute) data for the 「大陆以外」 mode. */
+  const [pacChinaRefreshing, setPacChinaRefreshing] = useState(false);
   const [pacPreview, setPacPreview] = useState<string | null>(null);
   const [pacPreviewLoading, setPacPreviewLoading] = useState(false);
   const [pacCopied, setPacCopied] = useState(false);
@@ -627,6 +630,47 @@ export function SettingsPage() {
       setPacClearing(false);
     }
   }, [t]);
+
+  /** Pull the China-direct data (chnroute IP CIDRs + China domain list). */
+  const onRefreshChinaRoutes = useCallback(async () => {
+    setPacChinaRefreshing(true);
+    setPacError(null);
+    try {
+      setPacList(await refreshChinaRoutes());
+      setPacStatus(await getPacStatus().catch(() => null));
+    } catch (e) {
+      setPacError(
+        t("pac.refreshError", { err: typeof e === "string" ? e : String(e) }),
+      );
+    } finally {
+      setPacChinaRefreshing(false);
+    }
+  }, [t]);
+
+  /** Toggle the reverse 「大陆以外」 mode. */
+  const onToggleChinaDirect = useCallback(
+    async (next: boolean) => {
+      setPacSettingsSaving(true);
+      setPacError(null);
+      try {
+        const status = await updatePacSettings({
+          sourceUrl: pacSourceUrl || pacStatus?.source_url || "",
+          autoUpdate: pacAutoUpdate,
+          updateIntervalHours: pacIntervalHours,
+          pacPort: pacStatus?.port,
+          chinaDirect: next,
+        });
+        setPacStatus(status);
+      } catch (e) {
+        setPacError(
+          t("pac.settingsError", { err: typeof e === "string" ? e : String(e) }),
+        );
+      } finally {
+        setPacSettingsSaving(false);
+      }
+    },
+    [pacSourceUrl, pacStatus, pacAutoUpdate, pacIntervalHours, t],
+  );
 
   const onCopyPac = useCallback(async () => {
     if (pacPreview == null) return;
@@ -2570,6 +2614,38 @@ export function SettingsPage() {
                         >
                           {t("pac.port")}: {pacStatus?.port ?? "…"}
                         </span>
+                        <span className="muted rules-policy-label"> · </span>
+                        <span
+                          className="pac-china-toggle"
+                          title={t("pac.chinaDirectHint")}
+                        >
+                          <GlassSwitchControl
+                            checked={pacStatus?.china_direct ?? false}
+                            size="sm"
+                            ready={pacStatus !== null}
+                            onChange={(v) => void onToggleChinaDirect(v)}
+                          />
+                          <span className="muted">{t("pac.chinaDirect")}</span>
+                        </span>
+                        {pacStatus?.china_direct && (
+                          <>
+                            <span className="muted rules-policy-label"> · </span>
+                            <span
+                              className="mono pac-port-chip"
+                              role="button"
+                              tabIndex={0}
+                              title={t("pac.chinaRefreshHint")}
+                              onClick={() => void onRefreshChinaRoutes()}
+                            >
+                              {pacChinaRefreshing
+                                ? t("pac.refreshing")
+                                : t("pac.chinaCount", {
+                                    n: pacStatus.china_count ?? 0,
+                                  })}{" "}
+                              ↻
+                            </span>
+                          </>
+                        )}
                       </div>
                       {!activePacGroup?.readOnly && (
                         <div className="rules-toolbar-tail">

@@ -113,9 +113,9 @@ pub fn list_pac_source_presets() -> Vec<crate::pac::PacSourcePreset> {
     crate::pac::source_presets()
 }
 
-/// 更新 PAC 设置：更新地址 / 自动更新 / 间隔 / 端口。
+/// 更新 PAC 设置：更新地址 / 自动更新 / 间隔 / 端口 / 反向模式。
 ///
-/// 端口变更且 PAC 服务运行中会重建服务并重指系统代理，因此在
+/// 端口/模式变更且 PAC 服务运行中会重建服务并重指系统代理，因此在
 /// spawn_blocking 线程里执行（内部会 block_on 停启 PAC 服务）。
 #[tauri::command]
 pub async fn update_pac_settings(
@@ -124,6 +124,7 @@ pub async fn update_pac_settings(
     auto_update: Option<bool>,
     update_interval_hours: Option<u32>,
     pac_port: Option<u16>,
+    china_direct: Option<bool>,
 ) -> Result<PacStatus, String> {
     let worker_app = app.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -131,11 +132,37 @@ pub async fn update_pac_settings(
             .try_state::<AppState>()
             .ok_or_else(|| "app state unavailable".to_string())?;
         state
-            .update_pac_settings(source_url, auto_update, update_interval_hours, pac_port)
+            .update_pac_settings(
+                source_url,
+                auto_update,
+                update_interval_hours,
+                pac_port,
+                china_direct,
+            )
             .map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| format!("update pac settings task: {e}"))?;
+    crate::tray::refresh_icon(&app);
+    result
+}
+
+/// 拉取「中国直连」数据（chnroute IP 段 + 中国域名），供反向「大陆以外」模式。
+#[tauri::command]
+pub async fn refresh_china_routes(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<crate::pac::PacList, String> {
+    let _ = &state;
+    let worker_app = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app
+            .try_state::<AppState>()
+            .ok_or_else(|| "app state unavailable".to_string())?;
+        state.refresh_china_routes().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("refresh china routes task: {e}"))?;
     crate::tray::refresh_icon(&app);
     result
 }

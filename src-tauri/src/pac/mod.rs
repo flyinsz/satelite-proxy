@@ -39,6 +39,17 @@ pub fn default_source_url() -> String {
     PAC_SOURCE_PRESETS[0].2.to_string()
 }
 
+/// 内置「中国直连」数据源（反向模式「大陆以外」用）——纯文本，每行一条。
+///
+/// 两个源都由 fcshark-org/route-list 每日自动更新，走 jsDelivr CDN 保证
+/// 国内可访问：
+///   - 中国 IPv4 段（chnroute CIDR）
+///   - 中国域名列表（每行一个域名）
+pub const CHINA_IPV4_URL: &str =
+    "https://cdn.jsdelivr.net/gh/fcshark-org/route-list@release/china_ipv4.txt";
+pub const CHINA_DOMAINS_URL: &str =
+    "https://cdn.jsdelivr.net/gh/fcshark-org/route-list@release/china_list.txt";
+
 /// 镜像预设条目（`list_pac_source_presets` 的返回体）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PacSourcePreset {
@@ -106,6 +117,13 @@ pub struct PacList {
     /// 自定义分组（每个分组独立启用，可增删改名）。
     #[serde(default)]
     pub groups: Vec<PacGroup>,
+    /// 中国直连域名（后缀匹配，如 `cn` / `.com.cn`）。反向模式
+    /// （「大陆以外」）下命中即直连。
+    #[serde(default)]
+    pub china_domains: Vec<String>,
+    /// 中国 IP 段（chnroute，CIDR）。反向模式下命中即直连。
+    #[serde(default)]
+    pub china_ip_cidrs: Vec<String>,
 }
 
 impl PacList {

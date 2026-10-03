@@ -7,7 +7,13 @@ use super::PacList;
 
 /// 生成完整 PAC JavaScript 文本。
 ///
-/// 生成的脚本结构：
+/// 两种模式：
+///  - **白名单**（`china_direct == false`，默认）：命中名单的域名 / IP 段走代理，
+///    其余直连。
+///  - **反向「大陆以外」**（`china_direct == true`）：内网 / 回环 / 中国域名 /
+///    中国 IP 段直连，其余**默认走代理**。
+///
+/// 生成的脚本结构（白名单）：
 /// ```js
 /// function FindProxyForURL(url, host) {
 ///   var PROXY = "PROXY 127.0.0.1:2080; DIRECT";
@@ -19,7 +25,16 @@ use super::PacList;
 ///
 /// 无法解析的 IP/CIDR 条目会被静默跳过；`proxy_host` / 名单内容由本应用
 /// 内部维护，直接以字面量嵌入 JS 字符串（调用方应传入可信值）。
-pub fn generate_pac(list: &PacList, proxy_host: &str, proxy_port: u16) -> String {
+pub fn generate_pac(
+    list: &PacList,
+    proxy_host: &str,
+    proxy_port: u16,
+    china_direct: bool,
+) -> String {
+    if china_direct {
+        return generate_china_direct_pac(list, proxy_host, proxy_port);
+    }
+
     let mut rules: Vec<String> = Vec::new();
 
     // 域名（后缀匹配）：统一去前导点、加一个点前缀。
@@ -90,11 +105,68 @@ pub fn generate_pac(list: &PacList, proxy_host: &str, proxy_port: u16) -> String
     out
 }
 
+/// 反向「大陆以外」PAC：内网 / 回环 / 中国域名 / 中国 IP 段直连，其余默认代理。
+fn generate_china_direct_pac(list: &PacList, proxy_host: &str, proxy_port: u16) -> String {
+    let mut out = String::new();
+    out.push_str("function FindProxyForURL(url, host) {\n");
+    out.push_str(&format!(
+        "  var PROXY = \"PROXY {proxy_host}:{proxy_port}; DIRECT\";\n"
+    ));
+
+    // 内网 / 回环直连：先于中国规则，避免代理自身（127.0.0.1:端口）成环。
+    out.push_str("  if (isPlainHostName(host)) return \"DIRECT\";\n");
+    out.push_str("  if (isInNet(host, \"127.0.0.0\", \"255.0.0.0\")) return \"DIRECT\";\n");
+    out.push_str("  if (isInNet(host, \"10.0.0.0\", \"255.0.0.0\")) return \"DIRECT\";\n");
+    out.push_str("  if (isInNet(host, \"172.16.0.0\", \"255.240.0.0\")) return \"DIRECT\";\n");
+    out.push_str("  if (isInNet(host, \"192.168.0.0\", \"255.255.0.0\")) return \"DIRECT\";\n");
+    out.push_str("  if (isInNet(host, \"169.254.0.0\", \"255.255.0.0\")) return \"DIRECT\";\n");
+
+    // 中国域名直连（后缀匹配）。
+    for domain in &list.china_domains {
+        let d = normalize_dot_domain(domain);
+        if !d.is_empty() {
+            out.push_str(&format!(
+                "  if (dnsDomainIs(host, \".{d}\")) return \"DIRECT\";\n"
+            ));
+        }
+    }
+
+    // 中国 IP 段直连（chnroute CIDR）。
+    for item in &list.china_ip_cidrs {
+        if let Some((ip, mask)) = split_cidr(item) {
+            out.push_str(&format!(
+                "  if (isInNet(host, \"{ip}\", \"{mask}\")) return \"DIRECT\";\n"
+            ));
+        }
+    }
+
+    out.push_str("  return PROXY;\n");
+    out.push_str("}\n");
+    out
+}
+
 /// 统计名单会生成多少条 PAC 匹配规则。
 ///
 /// 与 [`generate_pac`] 的入口口径一致：域名合并去重、IP/CIDR 只算能解析的、
-/// 地区按展开后的 CIDR 条数计。供 UI 展示「规则数」用。
-pub fn count_pac_rules(list: &PacList) -> usize {
+/// 地区按展开后的 CIDR 条数计。反向模式则统计内网（固定 6 条）+ 中国域名 +
+/// 中国 IP 段。供 UI 展示「规则数」用。
+pub fn count_pac_rules(list: &PacList, china_direct: bool) -> usize {
+    if china_direct {
+        // 内网/回环固定 6 条（isPlainHostName + 5 个网段）。
+        let mut count = 6;
+        for domain in &list.china_domains {
+            if !normalize_dot_domain(domain).is_empty() {
+                count += 1;
+            }
+        }
+        count += list
+            .china_ip_cidrs
+            .iter()
+            .filter(|cidr| split_cidr(cidr).is_some())
+            .count();
+        return count;
+    }
+
     let mut count = list.all_domains().len();
 
     if list.group_enabled("ip_cidrs") {
@@ -215,11 +287,11 @@ mod tests {
             gfwlist_domains: vec!["shared.com".into(), "google.com".into()],
             ..PacList::default()
         };
-        let script = generate_pac(&list, "127.0.0.1", 2080);
+        let script = generate_pac(&list, "127.0.0.1", 2080, false);
         // shared.com 只出现一次（自定义与上游重复）。
         assert_eq!(script.matches("dnsDomainIs(host, \".shared.com\")").count(), 1);
         assert!(script.contains("dnsDomainIs(host, \".google.com\")"));
-        assert_eq!(count_pac_rules(&list), 2);
+        assert_eq!(count_pac_rules(&list, false), 2);
     }
 
     #[test]
@@ -232,13 +304,13 @@ mod tests {
             regions: vec!["hk".into(), "unknown".into()],
             ..PacList::default()
         };
-        let script = generate_pac(&list, "127.0.0.1", 2080);
+        let script = generate_pac(&list, "127.0.0.1", 2080, false);
         let emitted = script
             .lines()
             .filter(|line| line.trim_start().starts_with("if ("))
             .count();
         assert_eq!(
-            count_pac_rules(&list),
+            count_pac_rules(&list, false),
             emitted,
             "计数必须与实际生成的规则行数一致"
         );
@@ -286,7 +358,7 @@ mod tests {
             domains: vec![".google.com".into(), "youtube.com".into()],
             ..Default::default()
         };
-        let pac = generate_pac(&list, "127.0.0.1", 2080);
+        let pac = generate_pac(&list, "127.0.0.1", 2080, false);
         assert!(pac.contains("var PROXY = \"PROXY 127.0.0.1:2080; DIRECT\";"));
         assert!(pac.contains("if (dnsDomainIs(host, \".google.com\")) return PROXY;"));
         assert!(pac.contains("if (dnsDomainIs(host, \".youtube.com\")) return PROXY;"));
@@ -303,7 +375,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let pac = generate_pac(&list, "127.0.0.1", 2080);
+        let pac = generate_pac(&list, "127.0.0.1", 2080, false);
         assert!(pac.contains("if (isInNet(host, \"1.2.3.0\", \"255.255.255.0\")) return PROXY;"));
         assert!(pac.contains("if (host == \"8.8.8.8\") return PROXY;"));
         assert!(!pac.contains("bad-entry"));
@@ -316,7 +388,7 @@ mod tests {
             regions: vec!["hk".into()],
             ..Default::default()
         };
-        let pac = generate_pac(&list, "127.0.0.1", 2080);
+        let pac = generate_pac(&list, "127.0.0.1", 2080, false);
         assert!(pac.contains("if (dnsDomainIs(host, \".hk\")) return PROXY;"));
         assert!(pac.contains("if (dnsDomainIs(host, \".tw\")) return PROXY;"));
         // 地区 hk 展开出预置段。
@@ -330,16 +402,63 @@ mod tests {
             regions: vec!["unknown-region".into()],
             ..Default::default()
         };
-        let pac = generate_pac(&list, "127.0.0.1", 2080);
+        let pac = generate_pac(&list, "127.0.0.1", 2080, false);
         assert!(!pac.contains("isInNet"));
     }
 
     #[test]
     fn empty_list_generates_minimal_pac() {
-        let pac = generate_pac(&PacList::default(), "127.0.0.1", 2080);
+        let pac = generate_pac(&PacList::default(), "127.0.0.1", 2080, false);
         assert!(pac.starts_with("function FindProxyForURL(url, host) {"));
         assert!(pac.ends_with("}\n"));
         assert!(!pac.contains("dnsDomainIs"));
         assert!(!pac.contains("isInNet"));
+    }
+
+    #[test]
+    fn china_direct_mode_defaults_to_proxy() {
+        // 反向模式：默认走代理（return PROXY 而非 DIRECT）。
+        let pac = generate_pac(&PacList::default(), "127.0.0.1", 2080, true);
+        assert!(pac.contains("return PROXY;"));
+        assert!(!pac.contains("return \"DIRECT\";\n}"));
+        // 内网 / 回环直连（含代理自身 127.0.0.1，避免成环）。
+        assert!(pac.contains("if (isPlainHostName(host)) return \"DIRECT\";"));
+        assert!(pac.contains("if (isInNet(host, \"127.0.0.0\", \"255.0.0.0\")) return \"DIRECT\";"));
+        assert!(pac.contains("if (isInNet(host, \"10.0.0.0\", \"255.0.0.0\")) return \"DIRECT\";"));
+        assert!(pac.contains("if (isInNet(host, \"172.16.0.0\", \"255.240.0.0\")) return \"DIRECT\";"));
+        assert!(pac.contains("if (isInNet(host, \"192.168.0.0\", \"255.255.0.0\")) return \"DIRECT\";"));
+        assert!(pac.contains("if (isInNet(host, \"169.254.0.0\", \"255.255.0.0\")) return \"DIRECT\";"));
+    }
+
+    #[test]
+    fn china_direct_mode_emits_china_domains_and_cidrs() {
+        let list = PacList {
+            china_domains: vec!["cn".into(), ".com.cn".into()],
+            china_ip_cidrs: vec!["1.0.1.0/24".into(), "bad/garbage".into()],
+            ..Default::default()
+        };
+        let pac = generate_pac(&list, "127.0.0.1", 2080, true);
+        assert!(pac.contains("if (dnsDomainIs(host, \".cn\")) return \"DIRECT\";"));
+        assert!(pac.contains("if (dnsDomainIs(host, \".com.cn\")) return \"DIRECT\";"));
+        assert!(pac.contains("if (isInNet(host, \"1.0.1.0\", \"255.255.255.0\")) return \"DIRECT\";"));
+        assert!(!pac.contains("bad/garbage"));
+        // 计数与实际规则行一致：6 内网 + 2 域名 + 1 合法 CIDR（非法跳过）。
+        assert_eq!(count_pac_rules(&list, true), 9);
+    }
+
+    #[test]
+    fn china_direct_mode_ignores_whitelist_fields() {
+        // 反向模式下 gfwlist / 自定义域名不参与（默认已走代理）。
+        let list = PacList {
+            domains: vec!["custom.com".into()],
+            gfwlist_domains: vec!["google.com".into()],
+            suffixes: vec!["hk".into()],
+            regions: vec!["hk".into()],
+            ..Default::default()
+        };
+        let pac = generate_pac(&list, "127.0.0.1", 2080, true);
+        assert!(!pac.contains("custom.com"));
+        assert!(!pac.contains("google.com"));
+        assert_eq!(count_pac_rules(&list, true), 6);
     }
 }

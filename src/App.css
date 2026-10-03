@@ -5803,6 +5803,15 @@ tr.dns-diag-tr:hover {
   color: var(--primary);
 }
 
+/* Reverse 「大陆以外」mode toggle in the PAC toolbar. */
+.pac-china-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  white-space: nowrap;
+  font-size: 0.78rem;
+}
+
 /* Group editor modal (new / edit group: name + remote URL + auto-update). */
 .pac-group-modal {
   width: min(520px, 100%);

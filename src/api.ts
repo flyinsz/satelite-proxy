@@ -840,6 +840,11 @@ export function refreshPacGroup(groupId: string) {
   return invoke<PacList>("refresh_pac_group", { groupId });
 }
 
+/** Pull the China-direct data (chnroute IP CIDRs + China domain list). */
+export function refreshChinaRoutes() {
+  return invoke<PacList>("refresh_china_routes");
+}
+
 /** Live PAC service state (kind / enabled / url / counts / last update). */
 export function getPacStatus() {
   return invoke<PacStatus>("get_pac_status");
@@ -850,18 +855,20 @@ export function listPacSourcePresets() {
   return invoke<PacSourcePreset[]>("list_pac_source_presets");
 }
 
-/** Update PAC settings: source URL / auto-update / interval / port. */
+/** Update PAC settings: source URL / auto-update / interval / port / reverse mode. */
 export function updatePacSettings(patch: {
   sourceUrl?: string;
   autoUpdate?: boolean;
   updateIntervalHours?: number;
   pacPort?: number;
+  chinaDirect?: boolean;
 }) {
   return invoke<PacStatus>("update_pac_settings", {
     sourceUrl: patch.sourceUrl ?? null,
     autoUpdate: patch.autoUpdate ?? null,
     updateIntervalHours: patch.updateIntervalHours ?? null,
     pacPort: patch.pacPort ?? null,
+    chinaDirect: patch.chinaDirect ?? null,
   });
 }
 

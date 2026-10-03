@@ -499,6 +499,7 @@ pub fn run() {
             commands::update_pac_settings,
             commands::get_pac_preview,
             commands::clear_gfwlist,
+            commands::refresh_china_routes,
             commands::get_dns_settings,
             commands::update_dns_settings,
             commands::reset_dns_defaults,

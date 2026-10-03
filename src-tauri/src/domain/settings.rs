@@ -273,6 +273,9 @@ pub struct AppSettings {
     /// 自动更新间隔（小时），最小 1。
     #[serde(default = "default_pac_update_interval_hours")]
     pub pac_update_interval_hours: u32,
+    /// 反向「大陆以外」模式：内网/回环/中国域名/IP 直连，其余默认走代理。
+    #[serde(default)]
+    pub pac_china_direct: bool,
     /// TUN TCP/IP stack: `system` | `gvisor` | `mixed` (default mixed).
     #[serde(default = "default_tun_stack")]
     pub tun_stack: String,
@@ -559,6 +562,7 @@ impl Default for AppSettings {
             pac_source_url: default_pac_source_url(),
             pac_auto_update: false,
             pac_update_interval_hours: default_pac_update_interval_hours(),
+            pac_china_direct: false,
             tun_stack: default_tun_stack(),
             tun_ipv6_enabled: false,
             block_quic: false,

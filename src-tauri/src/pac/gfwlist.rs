@@ -164,6 +164,27 @@ pub async fn fetch_gfwlist(url: &str) -> Result<Vec<String>, String> {
     Ok(parse_gfwlist_text(&decode_gfwlist_body(&body)?))
 }
 
+/// 拉取纯文本列表（每行一条，如 chnroute 的 IP 段 / 中国域名列表）。
+///
+/// 与 gfwlist 的 adblock 语法不同，这里只做「去空行、去注释（#/!）、trim」。
+pub async fn fetch_plain_list(url: &str) -> Result<Vec<String>, String> {
+    let body = reqwest::get(url)
+        .await
+        .map_err(|error| format!("fetch list: {error}"))?
+        .text()
+        .await
+        .map_err(|error| format!("read list body: {error}"))?;
+
+    Ok(body
+        .lines()
+        .map(str::trim)
+        .filter(|line| {
+            !line.is_empty() && !line.starts_with('#') && !line.starts_with('!')
+        })
+        .map(str::to_string)
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2239,8 +2239,12 @@ impl Runtime {
             };
             if store.settings.system_proxy_kind == crate::domain::SystemProxyKind::Pac {
                 // 生成 PAC 脚本并启动本地服务；端口被占用等失败直接返回。
-                let content =
-                    crate::pac::generator::generate_pac(&store.settings.pac_list, "127.0.0.1", port);
+                let content = crate::pac::generator::generate_pac(
+                    &store.settings.pac_list,
+                    "127.0.0.1",
+                    port,
+                    store.settings.pac_china_direct,
+                );
                 let server = tauri::async_runtime::block_on(crate::pac::server::PacServer::start(
                     store.settings.pac_port,
                     content,
@@ -2301,8 +2305,12 @@ impl Runtime {
         } else {
             store.settings.mixed_port
         };
-        let content =
-            crate::pac::generator::generate_pac(&store.settings.pac_list, "127.0.0.1", port);
+        let content = crate::pac::generator::generate_pac(
+            &store.settings.pac_list,
+            "127.0.0.1",
+            port,
+            store.settings.pac_china_direct,
+        );
         // 停掉旧服务释放端口，再启动新的（同端口）。
         if let Some(server) = self.pac_server.take() {
             tauri::async_runtime::block_on(server.stop());
