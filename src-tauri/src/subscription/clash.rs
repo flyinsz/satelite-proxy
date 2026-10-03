@@ -87,7 +87,11 @@ pub fn parse_clash_yaml(content: &str) -> AppResult<ParseResult> {
 /// embeds the verbatim entry. sing-box/Xray keep filtering them (the
 /// `Unknown` protocol is in neither support set). Keep this list aligned
 /// with mihomo's own `adapters/outbound` set.
-pub const MIHOMO_UNMODELED_TYPES: &[&str] = &["ssr", "mieru"];
+///
+/// `openvpn` needs mihomo ≥ 1.19.25 (Satelite ships 1.19.30); it carries the
+/// CF 家宽链式 shape used by cfnew-style providers, where the whole OpenVPN
+/// transport is nested under a front node via `dialer-proxy`.
+pub const MIHOMO_UNMODELED_TYPES: &[&str] = &["ssr", "mieru", "openvpn"];
 
 /// Compact YAML serialization of one proxy entry, for verbatim re-emit.
 fn raw_entry_body(item: &Value) -> Option<String> {
@@ -1398,6 +1402,44 @@ rules:
             again.nodes[0].id.clone()
         };
         assert_eq!(node.id, id_again);
+    }
+
+    #[test]
+    fn openvpn_is_rescued_as_raw_passthrough() {
+        // cfnew 家宽链式形态：openvpn 落地节点挂在 TLS 前置节点之后。
+        // 解析层不建模（Protocol::Unknown），但必须保留 raw 以便
+        // mihomo 生成时原样透传，且不再计入 skipped。
+        let yaml = "proxies:
+  - name: \"🏠 JP-家宽-01\"
+    type: openvpn
+    server: 118.1.2.3
+    port: 1337
+    cipher: AES-256-GCM
+    username: vpngw
+    password: gwpass
+    udp: false
+    dialer-proxy: \"🇯🇵 JP-前置-01\"
+  - name: \"🇯🇵 JP-前置-01\"
+    type: vless
+    server: jp.example.com
+    port: 443
+    uuid: 11111111-1111-1111-1111-111111111111
+    tls: true
+";
+        let parsed = parse_clash_yaml(yaml).unwrap();
+        assert_eq!(parsed.nodes.len(), 2, "openvpn 不应再被跳过");
+        assert!(parsed.skipped.is_empty(), "skipped: {:?}", parsed.skipped);
+
+        let ovpn = &parsed.nodes[0];
+        assert_eq!(ovpn.protocol, Protocol::Unknown);
+        assert_eq!(ovpn.source.as_deref(), Some("openvpn"));
+        assert_eq!(ovpn.server, "118.1.2.3");
+        assert_eq!(ovpn.port, 1337);
+        assert!(matches!(ovpn.config, ProtocolConfig::Unknown));
+        // raw 保留原始条目（含 dialer-proxy 与证书字段），供 mihomo 透传。
+        let raw = ovpn.raw.as_deref().expect("raw 必须保留");
+        assert!(raw.contains("type: openvpn"));
+        assert!(raw.contains("dialer-proxy"));
     }
 
     #[test]

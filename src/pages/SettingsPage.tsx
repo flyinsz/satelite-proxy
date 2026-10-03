@@ -2437,12 +2437,82 @@ export function SettingsPage() {
                     )}
                   </div>
 
+                  {/* 「大陆以外」反向模式：与分组同一列表呈现，开启时其余
+                      分组不参与 PAC 匹配（下方的分组会被淡化）。 */}
+                  <div
+                    className={`ruleset-item pac-group-item pac-mode-item${
+                      pacStatus?.china_direct ? " selected" : ""
+                    }`}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() =>
+                      void onToggleChinaDirect(!(pacStatus?.china_direct ?? false))
+                    }
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        void onToggleChinaDirect(
+                          !(pacStatus?.china_direct ?? false),
+                        );
+                      }
+                    }}
+                    title={t("pac.chinaDirectHint")}
+                  >
+                    <div className="ruleset-item-top">
+                      <span className="ruleset-name">
+                        {t("pac.chinaDirect")}
+                      </span>
+                      <span
+                        className="ruleset-switch"
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.stopPropagation()}
+                        role="presentation"
+                      >
+                        <GlassSwitchControl
+                          checked={pacStatus?.china_direct ?? false}
+                          size="sm"
+                          ready={pacStatus !== null}
+                          onChange={(v) => void onToggleChinaDirect(v)}
+                        />
+                      </span>
+                    </div>
+                    <div className="muted" style={{ fontSize: 12 }}>
+                      {pacStatus?.china_direct ? (
+                        <span
+                          className="mono"
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void onRefreshChinaRoutes();
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              void onRefreshChinaRoutes();
+                            }
+                          }}
+                        >
+                          {pacChinaRefreshing
+                            ? t("pac.refreshing")
+                            : t("pac.chinaCount", {
+                                n: pacStatus.china_count ?? 0,
+                              })}{" "}
+                          ↻
+                        </span>
+                      ) : (
+                        t("pac.chinaDirectShort")
+                      )}
+                    </div>
+                  </div>
+
                   {pacGroups.map((g, gi) => (
                     <div
                       key={g.id}
                       className={`ruleset-item pac-group-item${
                         pacActiveGroup === g.id ? " selected" : ""
-                      }`}
+                      }${pacStatus?.china_direct ? " pac-dimmed" : ""}`}
                       role="button"
                       tabIndex={0}
                       onClick={() => {
@@ -2614,38 +2684,6 @@ export function SettingsPage() {
                         >
                           {t("pac.port")}: {pacStatus?.port ?? "…"}
                         </span>
-                        <span className="muted rules-policy-label"> · </span>
-                        <span
-                          className="pac-china-toggle"
-                          title={t("pac.chinaDirectHint")}
-                        >
-                          <GlassSwitchControl
-                            checked={pacStatus?.china_direct ?? false}
-                            size="sm"
-                            ready={pacStatus !== null}
-                            onChange={(v) => void onToggleChinaDirect(v)}
-                          />
-                          <span className="muted">{t("pac.chinaDirect")}</span>
-                        </span>
-                        {pacStatus?.china_direct && (
-                          <>
-                            <span className="muted rules-policy-label"> · </span>
-                            <span
-                              className="mono pac-port-chip"
-                              role="button"
-                              tabIndex={0}
-                              title={t("pac.chinaRefreshHint")}
-                              onClick={() => void onRefreshChinaRoutes()}
-                            >
-                              {pacChinaRefreshing
-                                ? t("pac.refreshing")
-                                : t("pac.chinaCount", {
-                                    n: pacStatus.china_count ?? 0,
-                                  })}{" "}
-                              ↻
-                            </span>
-                          </>
-                        )}
                       </div>
                       {!activePacGroup?.readOnly && (
                         <div className="rules-toolbar-tail">

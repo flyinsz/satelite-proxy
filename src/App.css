@@ -5803,13 +5803,22 @@ tr.dns-diag-tr:hover {
   color: var(--primary);
 }
 
-/* Reverse 「大陆以外」mode toggle in the PAC toolbar. */
-.pac-china-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  white-space: nowrap;
-  font-size: 0.78rem;
+/* 「大陆以外」mode row — top of the PAC group list. The border/background
+   come from .ruleset-item.selected, so only the mode affordance is added. */
+.pac-mode-item {
+  border-color: var(--primary-border);
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+}
+
+.pac-mode-item.selected {
+  background: var(--primary-muted);
+}
+
+/* While the reverse mode is on, the whitelist groups no longer feed the PAC
+   script — dim them so the list does not imply they still apply. */
+.pac-group-item.pac-dimmed {
+  opacity: 0.42;
+  filter: saturate(0.6);
 }
 
 /* Group editor modal (new / edit group: name + remote URL + auto-update). */
