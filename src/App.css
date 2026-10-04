@@ -4050,6 +4050,24 @@ button.mix-on {
   color: var(--warn);
 }
 
+/* Chained-proxy hint badge — same pill shape as .sub-type-tag, but it's a
+   button: it deep-links to the rules page where 「导入分组」 lives. */
+.sub-chain-badge {
+  font-size: 0.66rem;
+  line-height: 1;
+  padding: 0.24rem 0.55rem;
+  border-radius: 999px;
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--warn) 16%, transparent);
+  color: var(--warn);
+  border: 1px solid color-mix(in srgb, var(--warn) 34%, transparent);
+  cursor: pointer;
+}
+
+.sub-chain-badge:hover {
+  background: color-mix(in srgb, var(--warn) 26%, transparent);
+}
+
 /* Relative "updated x hours ago" in the card's title row, before the ⋮ menu */
 .sub-card-updated {
   font-size: 0.7rem;

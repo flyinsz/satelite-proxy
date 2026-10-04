@@ -150,7 +150,16 @@ export function SettingsPage() {
   const { theme, setTheme, accent, setAccent, glow, setGlow, heroStyle, setHeroStyle, glassFrost, setGlassFrost } =
     useTheme();
   const [tab, setTab] = useState<SettingsTab>("app");
-  const [settings, setSettings] = useState<AppSettings | null>(null);
+  // Cross-page deep link: the profiles page's "chained nodes" badge sends
+  // the user straight to the rules tab (where 「导入分组」 lives).
+  useEffect(() => {
+    const onJump = (event: Event) => {
+      const detail = (event as CustomEvent<{ tab?: SettingsTab }>).detail;
+      if (detail?.tab) setTab(detail.tab);
+    };
+    window.addEventListener("satelite:settings-tab", onJump);
+    return () => window.removeEventListener("satelite:settings-tab", onJump);
+  }, []);  const [settings, setSettings] = useState<AppSettings | null>(null);
   /** Custom accent color picker (the extra swatch after the presets). */
   const [accentPickerOpen, setAccentPickerOpen] = useState(false);
   const [glowPickerOpen, setGlowPickerOpen] = useState(false);

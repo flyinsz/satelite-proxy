@@ -935,6 +935,28 @@ export function ConfigPage() {
                 {t("config.skipped", { n: item.skipped_count })}
               </span>
             )}
+            {item.has_chained_nodes && (
+              <button
+                type="button"
+                className="sub-chain-badge"
+                title={t("config.chainedNodesHint")}
+                onClick={() => {
+                  setMenuId(null);
+                  // The rules tab (home of 「导入分组」) lives inside the
+                  // settings page, so jump there first, then switch tab.
+                  window.dispatchEvent(
+                    new CustomEvent("satelite:nav", { detail: "settings" }),
+                  );
+                  window.dispatchEvent(
+                    new CustomEvent("satelite:settings-tab", {
+                      detail: { tab: "rules" },
+                    }),
+                  );
+                }}
+              >
+                {t("config.chainedNodes")}
+              </button>
+            )}
             {typeTag && <span className="sub-type-tag">{typeTag}</span>}
           </div>
           <TrafficBlock traffic={item.traffic} />

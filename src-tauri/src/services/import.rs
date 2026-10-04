@@ -1256,6 +1256,12 @@ fn build_outcome(
     };
     let real_nodes = dedupe_nodes(real_nodes);
     let node_count = real_nodes.len() as u32;
+    // mihomo chained proxies (cfnew 家宽链式): the node rides on a front node
+    // or proxy-group via `dialer-proxy`, so it only works once that group is
+    // imported as a node pool. Flag it so the UI can say so up front.
+    let has_chained_nodes = real_nodes
+        .iter()
+        .any(|n| n.raw.as_deref().is_some_and(|raw| raw.contains("dialer-proxy:")));
     let subscription = Subscription {
         id: id.clone(),
         name,
@@ -1272,6 +1278,7 @@ fn build_outcome(
         user_agent: None,
         rule_providers: parsed.rule_providers,
         proxy_groups: parsed.proxy_groups,
+        has_chained_nodes,
     };
 
     // Re-hash node ids on the subscription id + backend identity

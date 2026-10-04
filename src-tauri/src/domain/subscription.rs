@@ -421,6 +421,11 @@ pub struct Subscription {
     /// inputs). Persisted so the UI can offer "import as node pool".
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub proxy_groups: Vec<ClashProxyGroup>,
+    /// At least one node carries a `dialer-proxy` (mihomo chained proxy, e.g.
+    /// cfnew's 家宽链式). Such nodes only work once the referenced front
+    /// proxy-group is imported as a node pool, so the UI flags it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_chained_nodes: bool,
 }
 
 fn default_auto_update_interval_min() -> u32 {
@@ -452,6 +457,11 @@ pub struct SubscriptionView {
     /// First (or only) node facts — filled for single-node profiles.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub node_summary: Option<super::NodeSummary>,
+    /// At least one node carries a `dialer-proxy` (mihomo chained proxy, e.g.
+    /// cfnew's 家宽链式) — such nodes need their front proxy-group imported as
+    /// a node pool before they can be used.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_chained_nodes: bool,
 }
 
 /// Full fields for edit form (includes raw URL / path).
@@ -495,6 +505,9 @@ pub struct SubscriptionDetail {
     /// Clash `proxy-groups` discovered at last parse.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub proxy_groups: Vec<ClashProxyGroup>,
+    /// At least one node carries a `dialer-proxy` (mihomo chained proxy).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub has_chained_nodes: bool,
 }
 
 impl Subscription {
@@ -544,6 +557,7 @@ impl Subscription {
             auto_update_interval_min: self.auto_update_interval_min.max(1),
             traffic: self.traffic.clone(),
             node_summary: None,
+            has_chained_nodes: self.has_chained_nodes,
         }
     }
 
@@ -570,6 +584,7 @@ impl Subscription {
             user_agent: self.user_agent.clone(),
             rule_providers: self.rule_providers.clone(),
             proxy_groups: self.proxy_groups.clone(),
+            has_chained_nodes: self.has_chained_nodes,
         };
         match &self.source {
             SubscriptionSource::Url { url } => SubscriptionDetail {

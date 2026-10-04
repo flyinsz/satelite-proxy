@@ -158,6 +158,9 @@ export interface SubscriptionView {
   /** Minutes between auto updates (default 1440). */
   auto_update_interval_min?: number;
   traffic?: SubscriptionTraffic | null;
+  /** Some nodes carry mihomo's `dialer-proxy` (chained proxy) — their front
+   *  proxy-group must be imported as a node pool before they can be used. */
+  has_chained_nodes?: boolean;
 }
 
 /** Full subscription for edit form (raw url/path). */

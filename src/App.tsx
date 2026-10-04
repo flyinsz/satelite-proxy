@@ -63,6 +63,19 @@ function ProShell() {
     if (token && prefill) setNav("config");
   }, [token, prefill]);
 
+  // In-page cross-links (e.g. a subscription card's "chained nodes" badge
+  // sending the user to the rules page) can't call setNav directly — `nav`
+  // lives here and pages only receive their own props. A window event keeps
+  // the two decoupled without threading a callback through every page.
+  useEffect(() => {
+    const onJump = (event: Event) => {
+      const target = (event as CustomEvent<NavKey>).detail;
+      if (target) setNav(target);
+    };
+    window.addEventListener("satelite:nav", onJump);
+    return () => window.removeEventListener("satelite:nav", onJump);
+  }, []);
+
   useGlobalShortcuts(PRO_SHORTCUT_MAP, setNav, "settings");
 
   return (
