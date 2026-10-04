@@ -309,14 +309,27 @@ export function RulesPage({ embedded = false }: Props) {
     [sets],
   );
 
-  /** Compute whether a subscription's proxy-groups are all imported and enabled. */
+  /** Compute whether a subscription's proxy-groups are all imported and enabled.
+   *
+   *  Only groups that can actually become pools count. A clash group whose
+   *  `proxies:` are all group names (a pure selector such as "🚀 节点选择")
+   *  resolves to no node id, so the importer skips it forever — including it
+   *  here would pin the status at "none" and make the toggle look dead. */
   const proxyGroupStatus = useCallback(
     (sub: SubscriptionProxyGroups): "none" | "enabled" | "disabled" => {
-      const allExist = sub.groups.every((g) =>
+      const importable = sub.groups.filter(
+        (g) =>
+          g.kind.trim().toLowerCase() === "url-test" ||
+          g.kind.trim().toLowerCase() === "select" ||
+          g.kind.trim().toLowerCase() === "fallback" ||
+          g.kind.trim().toLowerCase() === "load-balance",
+      );
+      if (importable.length === 0) return "none";
+      const allExist = importable.every((g) =>
         pools.some((p) => p.name.toLowerCase() === g.name.toLowerCase()),
       );
       if (!allExist) return "none";
-      const allEnabled = sub.groups.every((g) => {
+      const allEnabled = importable.every((g) => {
         const p = pools.find((x) => x.name.toLowerCase() === g.name.toLowerCase());
         return p ? p.enabled : false;
       });
@@ -1448,13 +1461,11 @@ export function RulesPage({ embedded = false }: Props) {
     setProxyBusyIds((current) => new Set(current).add(sub.subscription_id));
     setError(null);
     try {
-      const result = await toggleSubscriptionProxyGroups(sub.subscription_id);
+      await toggleSubscriptionProxyGroups(sub.subscription_id);
       await reloadSets();
+      // Refreshes `pools`, which proxyGroupStatus reads — the switch flips
+      // once the enabled states land.
       await ensurePoolsLoaded();
-      if (result.count > 0 && result.enabled) {
-        // Pools landed on the chain page — keep the local picker lean.
-        void ensurePoolsLoaded();
-      }
     } catch (err) {
       setError(typeof err === "string" ? err : String(err));
     } finally {
