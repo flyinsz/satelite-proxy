@@ -1026,6 +1026,13 @@ export interface ProxyChain {
   hops: ChainHop[];
 }
 
+/** Result of importing a subscription's chained proxy-groups as chains. */
+export interface ImportChainsResult {
+  chains: ProxyChain[];
+  pools_created: number;
+  pools_reused: number;
+}
+
 /** One hop's chain-diagnosis probes (see `services/chain_diag.rs`). */
 export interface ChainHopDiag {
   label: string;

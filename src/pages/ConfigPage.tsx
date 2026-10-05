@@ -10,6 +10,7 @@ import {
   getSubscription,
   getSubscriptionCoreSupport,
   getSubscriptionRawConfig,
+  importSubscriptionChains,
   listSubscriptions,
   listSubscriptionUrls,
   peekSettings,
@@ -31,6 +32,7 @@ import { useI18n } from "../i18n";
 import { ErrorModal } from "../components/ErrorModal";
 import type {
   CoreSupportReport,
+  ImportChainsResult,
   ImportResult,
   SubscriptionTraffic,
   SubscriptionUrlEntry,
@@ -353,6 +355,10 @@ export function ConfigPage() {
     undefined,
   );
   const [supportCopied, setSupportCopied] = useState(false);
+  /** Subscription currently importing chained proxy-groups as chains. */
+  const [chainBusyId, setChainBusyId] = useState<string | null>(null);
+  /** Result of the last chained-import (chains + pool counts). */
+  const [chainResult, setChainResult] = useState<ImportChainsResult | null>(null);
 
   const busy = refreshingAll || actionId != null;
 
@@ -716,6 +722,23 @@ export function ConfigPage() {
     }
   }
 
+  /** 「链式」徽标: import the subscription's dialer-proxy chains as proxy
+   *  chains — backing pools are created/reused atomically server-side. */
+  async function handleImportChains(profile: SubscriptionView) {
+    setMenuId(null);
+    setChainBusyId(profile.id);
+    setImportError(null);
+    try {
+      const result = await importSubscriptionChains(profile.id);
+      setChainResult(result);
+      void reload();
+    } catch (e) {
+      setImportError(typeof e === "string" ? e : String(e));
+    } finally {
+      setChainBusyId(null);
+    }
+  }
+
   /** Copyable analysis report — the format real-user feedback is made of:
    *  per-core counts, per-node exclusion reasons, parse-level drops. */
   async function copySupportReport() {
@@ -940,21 +963,12 @@ export function ConfigPage() {
                 type="button"
                 className="sub-chain-badge"
                 title={t("config.chainedNodesHint")}
-                onClick={() => {
-                  setMenuId(null);
-                  // The rules tab (home of 「导入分组」) lives inside the
-                  // settings page, so jump there first, then switch tab.
-                  window.dispatchEvent(
-                    new CustomEvent("satelite:nav", { detail: "settings" }),
-                  );
-                  window.dispatchEvent(
-                    new CustomEvent("satelite:settings-tab", {
-                      detail: { tab: "rules" },
-                    }),
-                  );
-                }}
+                disabled={chainBusyId === item.id}
+                onClick={() => void handleImportChains(item)}
               >
-                {t("config.chainedNodes")}
+                {chainBusyId === item.id
+                  ? t("config.chainedImporting")
+                  : t("config.chainedNodes")}
               </button>
             )}
             {typeTag && <span className="sub-type-tag">{typeTag}</span>}
@@ -1109,6 +1123,57 @@ export function ConfigPage() {
         }}
         onSubmit={(p) => void handleSubmit(p)}
       />
+      {chainResult && (
+        <div className="modal-backdrop" onClick={() => setChainResult(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <header className="modal-header">
+              <h2>{t("config.chainedImported")}</h2>
+              <button
+                type="button"
+                className="icon-btn"
+                onClick={() => setChainResult(null)}
+                aria-label={t("common.close")}
+              >
+                ×
+              </button>
+            </header>
+            <div className="modal-body">
+              {chainResult.chains.length === 0 ? (
+                <p className="muted">{t("config.chainedEmpty")}</p>
+              ) : (
+                <>
+                  <p>
+                    {t("config.chainedSummary", {
+                      chains: chainResult.chains.length,
+                      created: chainResult.pools_created,
+                      reused: chainResult.pools_reused,
+                    })}
+                  </p>
+                  <ul className="chain-import-list">
+                    {chainResult.chains.map((c) => (
+                      <li key={c.id}>
+                        <span className="mono">{c.name}</span>
+                        <span className="muted">
+                          {c.hops.length} {t("config.chainedHops")}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              <p className="muted" style={{ fontSize: 12 }}>
+                {t("config.chainedKernelHint")}
+              </p>
+            </div>
+            <footer className="modal-footer">
+              <GlassButton variant="primary" onClick={() => setChainResult(null)}>
+                {t("common.close")}
+              </GlassButton>
+            </footer>
+          </div>
+        </div>
+      )}
+
       {rawProfile && (
         <div className="modal-backdrop">
           <div className="modal raw-config-modal">

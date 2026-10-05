@@ -78,6 +78,16 @@ export function importSubscriptionProxyGroups(subscriptionId: string) {
   });
 }
 
+/** Import one subscription's chained proxy-groups (dialer-proxy) as proxy
+ *  chains — each becomes `[前置池 → 落地池]`, with backing pools created
+ *  or reused atomically. */
+export function importSubscriptionChains(subscriptionId: string) {
+  return invoke<import("./types").ImportChainsResult>(
+    "import_subscription_chains",
+    { subscriptionId },
+  );
+}
+
 /** Toggle rule-providers for one subscription: enable if disabled/not-imported,
  *  disable if all enabled and already imported. */
 export function toggleSubscriptionRuleProviders(subscriptionId: string) {

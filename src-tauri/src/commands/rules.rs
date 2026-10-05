@@ -18,6 +18,17 @@ pub struct ToggleProvidersResult {
     pub imported: usize,
 }
 
+/// Result of importing chained proxy-groups as proxy chains.
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportChainsResult {
+    /// Chains created in this action (each `[前置池 → 落地池]`).
+    pub chains: Vec<crate::domain::ProxyChain>,
+    /// Node pools newly created to back the chains' hops.
+    pub pools_created: usize,
+    /// Node pools that already existed and were reused.
+    pub pools_reused: usize,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct SaveRuleInput {
     pub set_id: Option<String>,
@@ -1084,6 +1095,212 @@ pub fn import_subscription_proxy_groups(
     Ok(pools)
 }
 
+/// Extract the `dialer-proxy` target name from a node's raw Clash entry.
+///
+/// Returns the referenced proxy/group name (e.g. `⚡ CF前置`), or `None` when
+/// the node carries no `dialer-proxy` (a plain, non-chained node).
+fn extract_dialer_proxy_target(raw: &str) -> Option<String> {
+    let value: serde_yaml::Value = serde_yaml::from_str(raw).ok()?;
+    value
+        .get("dialer-proxy")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+}
+
+/// Ensure a clash proxy-group exists as a node pool, reusing the importer's
+/// semantics: an existing same-name pool is reused (strategy/probe synced),
+/// otherwise an explicit pool is created from the group's resolvable members.
+///
+/// Returns `(pool_id, created)`; `None` when the group's kind is unsupported
+/// or no member resolves to a node id.
+fn ensure_pool_for_group(
+    store: &mut crate::storage::AppStore,
+    group: &crate::domain::ClashProxyGroup,
+    node_ids: &HashMap<String, String>,
+) -> Option<(String, bool)> {
+    if !crate::domain::ClashProxyGroup::supported_kind(&group.kind) {
+        return None;
+    }
+    // Existing pool → reuse + sync strategy/probe.
+    if let Some(pool) = store
+        .pools
+        .iter()
+        .find(|p| p.name.eq_ignore_ascii_case(&group.name))
+    {
+        let id = pool.id.clone();
+        if let Some(p) = store
+            .pools
+            .iter_mut()
+            .find(|p| p.name.eq_ignore_ascii_case(&group.name))
+        {
+            p.strategy = crate::domain::PoolStrategy::from_clash_kind(&group.kind);
+            p.probe_url = group.url.clone();
+            p.interval = group.interval.and_then(|secs| u32::try_from(secs).ok());
+            p.tolerance = group.tolerance;
+        }
+        return Some((id, false));
+    }
+    // Resolve members → node ids; a group with no resolvable member can't
+    // become a pool (e.g. a pure selector whose members are group names).
+    let resolved: Vec<String> = group
+        .members
+        .iter()
+        .filter_map(|m| node_ids.get(m).cloned())
+        .collect();
+    if resolved.is_empty() {
+        return None;
+    }
+    let pool = store
+        .create_pool(
+            &group.name,
+            crate::domain::PoolMode::Explicit {
+                node_ids: resolved,
+            },
+        )
+        .ok()?;
+    if let Some(p) = store.pools.iter_mut().find(|p| p.id == pool.id) {
+        p.strategy = crate::domain::PoolStrategy::from_clash_kind(&group.kind);
+        p.probe_url = group.url.clone();
+        p.interval = group.interval.and_then(|secs| u32::try_from(secs).ok());
+        p.tolerance = group.tolerance;
+    }
+    Some((pool.id, true))
+}
+
+/// Import a subscription's chained proxy-groups as proxy chains.
+///
+/// cfnew-style 家宽链式 expresses a two-hop structure where each landing node
+/// carries `dialer-proxy: <前置组>`. This resolves those relationships into
+/// named chains `[前置池 → 落地池]`, creating the backing pools (or reusing
+/// existing ones) atomically — so the pool dependency is invisible to the UI.
+/// Pure selectors whose members are all group names resolve to nothing and are
+/// skipped.
+#[tauri::command]
+pub fn import_subscription_chains(
+    app: AppHandle,
+    subscription_id: String,
+) -> Result<ImportChainsResult, String> {
+    let state = app
+        .try_state::<AppState>()
+        .ok_or_else(|| "app state unavailable".to_string())?;
+
+    let result = state
+        .with_store_mut(|store| {
+            let sub = store
+                .subscriptions
+                .iter()
+                .find(|s| s.id == subscription_id)
+                .ok_or_else(|| crate::error::AppError::NotFound(subscription_id.clone()))?;
+            let groups = sub.proxy_groups.clone();
+            if groups.is_empty() {
+                return Err(crate::error::AppError::Config(
+                    "该订阅没有 proxy-groups，无法识别链式结构".into(),
+                ));
+            }
+
+            // Node name → node id, for this subscription only.
+            let node_ids: HashMap<String, String> = store
+                .nodes
+                .iter()
+                .filter(|n| n.subscription_id == subscription_id)
+                .map(|n| (n.node.name.clone(), n.node.id.clone()))
+                .collect();
+
+            // Recognize: for each node with a `dialer-proxy`, the group it
+            // belongs to is the landing group and its dialer-proxy target is
+            // the front group. Dedup on (landing, front).
+            let mut landing_to_front: Vec<(String, String)> = Vec::new();
+            let mut seen: std::collections::HashSet<(String, String)> =
+                std::collections::HashSet::new();
+            for node in store
+                .nodes
+                .iter()
+                .filter(|n| n.subscription_id == subscription_id)
+            {
+                let Some(raw) = node.node.raw.as_deref() else {
+                    continue;
+                };
+                let Some(target) = extract_dialer_proxy_target(raw) else {
+                    continue;
+                };
+                for g in &groups {
+                    if g.members.iter().any(|m| m == &node.node.name) {
+                        let key = (g.name.clone(), target.clone());
+                        if seen.insert(key.clone()) {
+                            landing_to_front.push(key);
+                        }
+                    }
+                }
+            }
+            if landing_to_front.is_empty() {
+                return Err(crate::error::AppError::Config(
+                    "未检测到链式节点（dialer-proxy）".into(),
+                ));
+            }
+
+            // Build pools + chains atomically.
+            let mut chains_created: Vec<crate::domain::ProxyChain> = Vec::new();
+            let mut pools_created = 0usize;
+            let mut pools_reused = 0usize;
+
+            for (landing_name, front_name) in &landing_to_front {
+                let Some(front_group) = groups.iter().find(|g| &g.name == front_name) else {
+                    continue;
+                };
+                let Some(landing_group) = groups.iter().find(|g| &g.name == landing_name) else {
+                    continue;
+                };
+                let Some((front_pool_id, fc)) = ensure_pool_for_group(store, front_group, &node_ids)
+                else {
+                    continue;
+                };
+                let Some((landing_pool_id, lc)) =
+                    ensure_pool_for_group(store, landing_group, &node_ids)
+                else {
+                    continue;
+                };
+                pools_created += usize::from(fc);
+                pools_reused += usize::from(!fc);
+                pools_created += usize::from(lc);
+                pools_reused += usize::from(!lc);
+
+                // Chain name = landing group name; dedupe with a suffix.
+                let mut name = landing_name.clone();
+                let mut n = 2u32;
+                while store.chains.iter().any(|c| c.name.eq_ignore_ascii_case(&name)) {
+                    name = format!("{landing_name} #{n}");
+                    n += 1;
+                }
+                match store.create_chain(
+                    &name,
+                    vec![
+                        crate::domain::ChainHop::Pool {
+                            pool_id: front_pool_id,
+                        },
+                        crate::domain::ChainHop::Pool {
+                            pool_id: landing_pool_id,
+                        },
+                    ],
+                ) {
+                    Ok(c) => chains_created.push(c),
+                    Err(_) => continue,
+                }
+            }
+
+            Ok(ImportChainsResult {
+                chains: chains_created,
+                pools_created,
+                pools_reused,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+
+    // New chains/pools change the generated outbounds — same restart contract
+    // as other chain/pool edits.
+    crate::rule_apply::request_restart(app, Vec::new());
+    Ok(result)
+}
+
     /// Toggle subscription rule-providers on/off for a subscription.
 ///
 /// If all rule-providers are already imported as rule-sets: toggle their
@@ -1800,4 +2017,99 @@ pub fn set_rule_enabled(
         apply_running(&app);
     }
     Ok(rule)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::ClashProxyGroup;
+
+    #[test]
+    fn extracts_dialer_proxy_target() {
+        let raw = "name: node
+type: openvpn
+server: 1.2.3.4
+port: 1337
+dialer-proxy: \"⚡ CF前置\"
+";
+        assert_eq!(
+            extract_dialer_proxy_target(raw).as_deref(),
+            Some("⚡ CF前置")
+        );
+
+        let no_dialer = "name: node\ntype: ss\nserver: x\nport: 1\n";
+        assert_eq!(extract_dialer_proxy_target(no_dialer), None);
+    }
+
+    #[test]
+    fn ensure_pool_creates_then_reuses() {
+        let mut store = crate::storage::AppStore::default();
+        // A real node so `create_pool`'s member validation passes.
+        let node = crate::domain::ProxyNode {
+            id: String::new(),
+            name: "node-a".into(),
+            protocol: crate::domain::Protocol::Shadowsocks,
+            server: "example.com".into(),
+            port: 8388,
+            tls: None,
+            transport: None,
+            udp: None,
+            config: crate::domain::ProtocolConfig::Shadowsocks {
+                method: "aes-256-gcm".into(),
+                password: "pw".into(),
+                plugin: None,
+                plugin_opts: None,
+                shadow_tls: None,
+            },
+            source: None,
+            raw: None,
+            latency_ms: None,
+            latency_at: None,
+        }
+        .with_computed_id();
+        let node_id = node.id.clone();
+        store.nodes.push(crate::storage::StoredNode {
+            subscription_id: "sub".into(),
+            node,
+            latency_method: None,
+        });
+
+        let mut node_ids = HashMap::new();
+        node_ids.insert("node-a".to_string(), node_id);
+
+        let group = ClashProxyGroup {
+            name: "⚡ CF前置".into(),
+            kind: "url-test".into(),
+            url: None,
+            interval: None,
+            tolerance: None,
+            members: vec!["node-a".into()],
+        };
+
+        let (id, created) = ensure_pool_for_group(&mut store, &group, &node_ids).unwrap();
+        assert!(created, "首次应建池");
+        assert_eq!(store.pools.len(), 1);
+        assert_eq!(store.pools[0].strategy, crate::domain::PoolStrategy::UrlTest);
+
+        let (id2, created2) = ensure_pool_for_group(&mut store, &group, &node_ids).unwrap();
+        assert!(!created2, "再次应复用");
+        assert_eq!(id, id2);
+        assert_eq!(store.pools.len(), 1);
+    }
+
+    #[test]
+    fn ensure_pool_skips_group_with_no_resolvable_members() {
+        let mut store = crate::storage::AppStore::default();
+        let node_ids = HashMap::new(); // 空映射 → 成员解析不到
+        let group = ClashProxyGroup {
+            name: "🚀 节点选择".into(),
+            kind: "select".into(),
+            url: None,
+            interval: None,
+            tolerance: None,
+            members: vec!["⚡ CF前置".into(), "🏠 家宽节点".into()], // 组名，非节点名
+        };
+        assert!(ensure_pool_for_group(&mut store, &group, &node_ids).is_none());
+        assert!(store.pools.is_empty());
+    }
 }

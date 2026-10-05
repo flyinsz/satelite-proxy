@@ -521,6 +521,7 @@ pub fn run() {
             commands::refresh_remote_rule_set,
             commands::import_subscription_rule_providers,
             commands::import_subscription_proxy_groups,
+            commands::import_subscription_chains,
             commands::toggle_subscription_rule_providers,
             commands::toggle_subscription_proxy_groups,
             commands::reorder_rule_sets,

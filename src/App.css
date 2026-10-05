@@ -4068,6 +4068,31 @@ button.mix-on {
   background: color-mix(in srgb, var(--warn) 26%, transparent);
 }
 
+.sub-chain-badge:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Imported-chain result list in the chained-import modal. */
+.chain-import-list {
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.chain-import-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  background: var(--hover-wash);
+}
+
 /* Relative "updated x hours ago" in the card's title row, before the ⋮ menu */
 .sub-card-updated {
   font-size: 0.7rem;
