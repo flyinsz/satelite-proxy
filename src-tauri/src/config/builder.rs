@@ -1405,7 +1405,7 @@ fn build_pool_selectors(
 /// [`pool_member_tags`]'s ordering — `Explicit` keeps its configured order,
 /// `Keyword` is latency-sorted. Used where the chain builder needs the nodes
 /// themselves (to mint per-member clones), not just their tags.
-fn pool_member_nodes<'a>(
+pub(crate) fn pool_member_nodes<'a>(
     pool: &crate::domain::NodePool,
     nodes: &'a [ProxyNode],
     tags: &[String],

@@ -2704,6 +2704,7 @@ mod tests {
             user_agent: None,
             rule_providers: Vec::new(),
             proxy_groups: Vec::new(),
+            has_chained_nodes: false,
         };
         let mk = |id: &str, name: &str| crate::domain::ProxyNode {
             id: id.into(),
@@ -2790,6 +2791,7 @@ mod tests {
             user_agent: None,
             rule_providers: Vec::new(),
             proxy_groups: Vec::new(),
+            has_chained_nodes: false,
         };
         let mk = |id: &str, name: &str| crate::domain::ProxyNode {
             id: id.into(),
@@ -2859,6 +2861,7 @@ mod tests {
             user_agent: None,
             rule_providers: Vec::new(),
             proxy_groups: Vec::new(),
+            has_chained_nodes: false,
         };
         let mk = |id: &str, name: &str| crate::domain::ProxyNode {
             id: id.into(),
@@ -3563,6 +3566,7 @@ mod tests {
             user_agent: None,
             rule_providers: Vec::new(),
             proxy_groups: Vec::new(),
+            has_chained_nodes: false,
         }
     }
 

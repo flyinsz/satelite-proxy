@@ -876,6 +876,7 @@ mod tests {
             user_agent: None,
             rule_providers: Vec::new(),
             proxy_groups: Vec::new(),
+            has_chained_nodes: false,
         });
         let second = unique_subscription_id(&store, subscription_id(&source));
         assert_ne!(second, base);

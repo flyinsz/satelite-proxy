@@ -14,14 +14,16 @@
 //! mihomo home dir — see `core::assets`).
 
 use crate::config::builder::{
-    clamp_rule_pin_to_set, effective_route_rules, filter_pool_tags, outbound_tag,
-    resolve_selected_tag, rule_set_is_empty_for_config, smart_pool_tags, BuildOptions,
+    chain_hop_outbound_tag, clamp_rule_pin_to_set, effective_route_rules, filter_pool_tags,
+    outbound_tag, pool_member_nodes, resolve_selected_tag, rule_set_is_empty_for_config,
+    smart_pool_tags, BuildOptions,
 };
 use crate::config::punycode::to_ascii_domain;
 use crate::core::kind::CoreKind;
 use crate::domain::{
-    DnsAction, DomainMatcher, OutboundMode, Protocol, ProtocolConfig, ProxyNode, Rule, RuleSet,
-    RuleSetDnsStrategy, RuleSetStrategy, RuleTarget, RuleType, Transport, DOMESTIC_DNS_POOL,
+    ChainHop, DnsAction, DomainMatcher, OutboundMode, Protocol, ProtocolConfig, ProxyChain,
+    ProxyNode, Rule, RuleSet, RuleSetDnsStrategy, RuleSetStrategy, RuleTarget, RuleType, Transport,
+    DOMESTIC_DNS_POOL,
 };
 use crate::error::{AppError, AppResult};
 use serde_yaml::{Mapping, Value as Yaml};
@@ -290,6 +292,25 @@ pub fn build_mihomo_config(
         smart_group_tags.insert(rule.id.clone(), group_tag);
     }
 
+    // —— named multi-hop chains ——
+    // mihomo has no `detour` (that is sing-box's chain primitive) but its
+    // `dialer-proxy` expresses the exact same hop[1..] → hop[0] wiring: each
+    // hop i ≥ 1 dials hop[i-1]. Chains are emitted as chain-local clones of
+    // their hop nodes/pools so the `dialer-proxy` edit never touches the tag
+    // a node is directly selectable under. Rules then route to the LAST hop
+    // (the exit the internet sees), mirroring the sing-box builder.
+    let mut chain_entry_tags: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    build_chain_groups(
+        &opts.chains,
+        &opts.pools,
+        &supported,
+        &tags,
+        &mut proxies,
+        &mut groups,
+        &mut chain_entry_tags,
+    );
+
     // —— rules ——
     let rules = build_rules(
         opts,
@@ -298,6 +319,7 @@ pub fn build_mihomo_config(
         &effective_rules,
         &filter_group_tags,
         &smart_group_tags,
+        &chain_entry_tags,
     );
 
     // —— document ——
@@ -494,6 +516,143 @@ fn url_test_group(name: &str, members: Vec<String>, probe_url: &str) -> Mapping 
     g
 }
 
+/// Emit named multi-hop chains as mihomo `dialer-proxy` chains.
+///
+/// Mirrors `builder.rs::build_chain_outbounds_for`: every hop resolves to a
+/// tag first (bailing out on any dead hop), then each hop i ≥ 1 is cloned and
+/// its `dialer-proxy` set to hop[i-1]'s tag. Chain-local pool hops (i ≥ 1)
+/// become a select group over their cloned members. Rules route to the LAST
+/// hop — the exit the internet sees.
+///
+/// `proxies` / `groups` are appended in place; `entry_tags` maps chain id →
+/// the route-facing tag so `build_rules` can point `RuleTarget::Chain` at it.
+#[allow(clippy::too_many_arguments)]
+fn build_chain_groups(
+    chains: &[ProxyChain],
+    pools: &[crate::domain::NodePool],
+    nodes: &[ProxyNode],
+    tags: &[String],
+    proxies: &mut Vec<Mapping>,
+    groups: &mut Vec<Mapping>,
+    entry_tags: &mut std::collections::HashMap<String, String>,
+) {
+    let live_pool_ids: std::collections::HashSet<&str> = pools
+        .iter()
+        .filter(|p| !crate::config::builder::pool_member_tags(p, nodes, tags).is_empty())
+        .map(|p| p.id.as_str())
+        .collect();
+
+    for chain in chains {
+        if chain.hops.len() < 2 {
+            continue;
+        }
+
+        // Resolve every hop's tag first; bail on any dead hop.
+        let mut hop_tags: Vec<String> = Vec::with_capacity(chain.hops.len());
+        let mut broken = false;
+        for (i, hop) in chain.hops.iter().enumerate() {
+            match hop {
+                ChainHop::Node { node_id } => {
+                    let live = nodes
+                        .iter()
+                        .find(|n| &n.id == node_id)
+                        .is_some_and(|n| tags.iter().any(|t| t == &outbound_tag(n)));
+                    if !live {
+                        broken = true;
+                        break;
+                    }
+                    hop_tags.push(chain_hop_outbound_tag(chain, i));
+                }
+                ChainHop::Pool { pool_id } => {
+                    if !live_pool_ids.contains(pool_id.as_str()) {
+                        broken = true;
+                        break;
+                    }
+                    // hop[0] pool: client-side entry, shared group suffices;
+                    // pools at i ≥ 1 get a chain-local select group.
+                    let tag = if i == 0 {
+                        crate::domain::pool_outbound_tag_for_id(pool_id)
+                    } else {
+                        chain_hop_outbound_tag(chain, i)
+                    };
+                    hop_tags.push(tag);
+                }
+            }
+        }
+        if broken {
+            continue;
+        }
+
+        let last = chain.hops.len() - 1;
+        // Emit forward so each hop's `dialer-proxy` target precedes it.
+        for i in 0..chain.hops.len() {
+            let prev = if i == 0 {
+                None
+            } else {
+                Some(hop_tags[i - 1].clone())
+            };
+            match &chain.hops[i] {
+                // Pool hop at i ≥ 1: chain-local select group over clones.
+                ChainHop::Pool { pool_id } if i != 0 => {
+                    let pool = pools
+                        .iter()
+                        .find(|p| &p.id == pool_id)
+                        .expect("liveness checked in the tag pass");
+                    let members = pool_member_nodes(pool, nodes, tags);
+                    let mut clone_tags = Vec::with_capacity(members.len());
+                    for (j, node) in members.into_iter().enumerate() {
+                        let clone_tag = format!("{}-m{j}", hop_tags[i]);
+                        let mut m = match mihomo_proxy_mapping(node) {
+                            Ok(m) => m,
+                            Err(_) => {
+                                broken = true;
+                                break;
+                            }
+                        };
+                        m.insert(str_yaml("name"), str_yaml(&clone_tag));
+                        if let Some(p) = &prev {
+                            m.insert(str_yaml("dialer-proxy"), str_yaml(p));
+                        }
+                        proxies.push(m);
+                        clone_tags.push(clone_tag);
+                    }
+                    if broken || clone_tags.is_empty() {
+                        broken = true;
+                        break;
+                    }
+                    let default = clone_tags[0].clone();
+                    groups.push(select_group(&hop_tags[i], clone_tags, Some(default)));
+                }
+                // hop[0] pool: shared group already emitted by the pool loop.
+                ChainHop::Pool { .. } => {}
+                ChainHop::Node { node_id } => {
+                    let node = nodes
+                        .iter()
+                        .find(|n| &n.id == node_id)
+                        .expect("presence checked above");
+                    let clone_tag = hop_tags[i].clone();
+                    let mut m = match mihomo_proxy_mapping(node) {
+                        Ok(m) => m,
+                        Err(_) => {
+                            broken = true;
+                            break;
+                        }
+                    };
+                    m.insert(str_yaml("name"), str_yaml(&clone_tag));
+                    if let Some(p) = &prev {
+                        m.insert(str_yaml("dialer-proxy"), str_yaml(p));
+                    }
+                    proxies.push(m);
+                }
+            }
+        }
+        if broken {
+            continue;
+        }
+        entry_tags.insert(chain.id.clone(), hop_tags[last].clone());
+    }
+}
+
 /// mihomo tun block. mihomo works best with fake-ip DNS for tun —
 /// `build_dns` forces fake-ip whenever tun is on. `stack` defaults to
 /// system in mihomo; `strict-route` etc. stay at defaults intentionally.
@@ -554,6 +713,7 @@ fn build_rules(
     effective_rules: &[Rule],
     filter_group_tags: &std::collections::HashMap<String, String>,
     smart_group_tags: &std::collections::HashMap<String, String>,
+    chain_entry_tags: &std::collections::HashMap<String, String>,
 ) -> Vec<String> {
     let mut rules = Vec::new();
     // Rule mode compiles user rule sets; Global/Direct ignore them (the
@@ -561,7 +721,14 @@ fn build_rules(
     if opts.outbound_mode == OutboundMode::Rule {
         if opts.rule_sets.is_empty() {
             for rule in effective_rules {
-                if let Some(s) = rule_to_mihomo(rule, nodes, tags, MAIN_GROUP, smart_group_tags) {
+                if let Some(s) = rule_to_mihomo(
+                    rule,
+                    nodes,
+                    tags,
+                    MAIN_GROUP,
+                    smart_group_tags,
+                    chain_entry_tags,
+                ) {
                     rules.push(s);
                 }
             }
@@ -606,7 +773,7 @@ fn build_rules(
                         clamp_rule_pin_to_set(set, &mut rule);
                     }
                     if let Some(s) =
-                        rule_to_mihomo(&rule, nodes, tags, MAIN_GROUP, smart_group_tags)
+                        rule_to_mihomo(&rule, nodes, tags, MAIN_GROUP, smart_group_tags, chain_entry_tags)
                     {
                         rules.push(match filter_group {
                             Some(group) => retarget_rule(&s, group),
@@ -658,6 +825,7 @@ fn rule_to_mihomo(
     tags: &[String],
     main_target: &str,
     smart_group_tags: &std::collections::HashMap<String, String>,
+    chain_entry_tags: &std::collections::HashMap<String, String>,
 ) -> Option<String> {
     let payload = rule.payload.trim();
     if payload.is_empty() || matches!(rule.rule_type, RuleType::Geoip) {
@@ -680,10 +848,13 @@ fn rule_to_mihomo(
     let target = match target {
         RuleTarget::Direct => "DIRECT".to_string(),
         RuleTarget::Block => "REJECT".to_string(),
-        // Clash/mihomo has no `detour` chain concept — Chain routing is a
-        // sing-box-only feature (see builder.rs). Degrade to the main group,
-        // same as an empty Smart pool.
-        RuleTarget::Proxy | RuleTarget::Chain | RuleTarget::Pool => main_target.to_string(),
+        // Chains resolve to their exit hop's tag (emitted by
+        // `build_chain_groups`); a stale chain falls back to the main group.
+        RuleTarget::Chain => chain_entry_tags
+            .get(rule.chain_id.as_deref().unwrap_or_default())
+            .cloned()
+            .unwrap_or_else(|| main_target.to_string()),
+        RuleTarget::Proxy | RuleTarget::Pool => main_target.to_string(),
         RuleTarget::Smart => smart_group_tags
             .get(&rule.id)
             .cloned()
@@ -1749,6 +1920,73 @@ dialer-proxy: \"⚡ CF前置\"
                 .iter()
                 .any(|g| g["name"].as_str() == Some(pool.outbound_tag().as_str())),
             "池必须以 proxy-group 形式存在"
+        );
+    }
+
+    /// 代理链在 mihomo 落地：`[hop-a → hop-b]` 两跳链 → hop-b 的链局部克隆
+    /// 设 `dialer-proxy` 指向 hop-a 的克隆，规则路由到最后跳（hop-b）。
+    #[test]
+    fn chain_emits_dialer_proxy_wiring() {
+        let a = plain_node("hop-a");
+        let b = plain_node("hop-b");
+        let chain = crate::domain::ProxyChain::new(
+            "test-chain",
+            vec![
+                crate::domain::ChainHop::Node { node_id: a.id.clone() },
+                crate::domain::ChainHop::Node { node_id: b.id.clone() },
+            ],
+        );
+        let mut opts = default_opts();
+        opts.chains = vec![chain.clone()];
+        opts.rules = vec![crate::domain::Rule {
+            id: "r1".into(),
+            ord: 0,
+            rule_type: crate::domain::RuleType::DomainSuffix,
+            payload: "example.com".into(),
+            target: crate::domain::RuleTarget::Chain,
+            enabled: true,
+            node_id: None,
+            node_name: None,
+            smart_include: vec![],
+            smart_exclude: vec![],
+            chain_id: Some(chain.id.clone()),
+            chain_name: None,
+            pool_id: None,
+            pool_name: None,
+        }];
+
+        let built = build_mihomo_config(&[a.clone(), b.clone()], &opts).expect("build");
+        let doc = parse(&built);
+        let proxies = proxies_of(&doc);
+
+        let hop_a_tag = chain_hop_outbound_tag(&chain, 0);
+        let hop_b_tag = chain_hop_outbound_tag(&chain, 1);
+
+        // hop-b 的链局部克隆存在，且 dialer-proxy 指向 hop-a 的克隆。
+        let b_clone = proxies
+            .iter()
+            .find(|p| p["name"].as_str() == Some(hop_b_tag.as_str()))
+            .expect("hop-b 链局部克隆应存在");
+        assert_eq!(
+            b_clone["dialer-proxy"].as_str(),
+            Some(hop_a_tag.as_str()),
+            "hop-b 应通过 dialer-proxy 指向 hop-a"
+        );
+
+        // hop-a 的克隆无 dialer-proxy（它是入口，直连 internet）。
+        let a_clone = proxies
+            .iter()
+            .find(|p| p["name"].as_str() == Some(hop_a_tag.as_str()))
+            .expect("hop-a 链局部克隆应存在");
+        assert!(a_clone.get("dialer-proxy").is_none(), "入口跳不应有 dialer-proxy");
+
+        // 规则路由到最后跳（hop-b）的 tag。
+        let rules = rules_of(&doc);
+        assert!(
+            rules
+                .iter()
+                .any(|r| r == &format!("DOMAIN-SUFFIX,example.com,{hop_b_tag}")),
+            "规则应路由到链出口跳 hop-b，实际: {rules:?}"
         );
     }
 
