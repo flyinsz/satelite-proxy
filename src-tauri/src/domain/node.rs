@@ -484,9 +484,15 @@ impl ProxyNode {
     pub fn scoped_id(&self, scope: &str) -> String {
         let mut hasher = Sha256::new();
         if matches!(self.protocol, Protocol::Unknown) {
+            // Raw bodies (openvpn 家宽 etc.) embed volatile fields — the
+            // VPN-Gate server IP rotates, certs reissue — so hashing the whole
+            // raw would rotate the node id on every subscription refresh and
+            // orphan every Explicit pool / chain hop that pinned it. Hash the
+            // display name instead: it is the airport-stable identity and is
+            // already unique per subscription after dedupe.
             hasher.update(scope.as_bytes());
-            hasher.update(b"|raw|");
-            hasher.update(self.raw.as_deref().unwrap_or(&self.name).as_bytes());
+            hasher.update(b"|name|");
+            hasher.update(self.name.as_bytes());
             return hex::encode(&hasher.finalize()[..16]);
         }
         hasher.update(scope.as_bytes());
@@ -509,7 +515,9 @@ impl ProxyNode {
     /// Same outbound credentials — ignore display-name fragments.
     pub fn identity_key(&self) -> String {
         if matches!(self.protocol, Protocol::Unknown) {
-            return format!("unknown|{}", self.raw.as_deref().unwrap_or(&self.name));
+            // Match `scoped_id`: the stable identity is the display name, not
+            // the raw body (whose embedded server IP / certs rotate).
+            return format!("unknown|{}", self.name);
         }
         format!(
             "{}|{}|{}|{}",
@@ -912,5 +920,31 @@ mod tests {
         ProxyNode::ensure_unique_ids(second.iter_mut());
         assert_eq!(first[1].id, second[1].id);
         assert_ne!(first[0].id, first[1].id);
+    }
+
+    /// 家宽 openvpn 节点（Protocol::Unknown）的 raw 里嵌入了会轮换的动态
+    /// 字段（VPN-Gate server IP、证书），所以 id 必须基于稳定的 display
+    /// name —— 否则每次订阅刷新 id 都变，Explicit 池/链 hop 全部失效。
+    #[test]
+    fn unknown_node_id_is_stable_across_raw_changes() {
+        let mk = |raw: &str| ProxyNode {
+            id: String::new(),
+            name: "🏠 JP-家宽-01".into(),
+            protocol: Protocol::Unknown,
+            server: "127.0.0.1".into(),
+            port: 1337,
+            tls: None,
+            transport: None,
+            udp: None,
+            config: ProtocolConfig::Unknown,
+            source: None,
+            raw: Some(raw.into()),
+            latency_ms: None,
+            latency_at: None,
+        };
+        let a = mk("server: 1.2.3.4\nport: 1337\n");
+        let b = mk("server: 5.6.7.8\nport: 1337\n"); // IP 变了，raw 变了
+        assert_eq!(a.scoped_id("sub"), b.scoped_id("sub"));
+        assert_eq!(a.identity_key(), b.identity_key());
     }
 }
