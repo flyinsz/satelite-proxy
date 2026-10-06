@@ -1618,13 +1618,47 @@ fn build_chain_outbounds_for(
                 if clone_tags.is_empty() {
                     return None;
                 }
-                let default = clone_tags[0].clone();
-                outbounds.push(json!({
-                    "type": "selector",
-                    "tag": hop_tags[i],
-                    "outbounds": clone_tags,
-                    "default": default,
-                }));
+                // Respect the pool's strategy (mirror `build_pool_selectors`):
+                // a fallback/url-test landing pool auto-picks a healthy clone.
+                use crate::domain::PoolStrategy;
+                match pool.strategy {
+                    PoolStrategy::UrlTest
+                    | PoolStrategy::Fallback
+                    | PoolStrategy::LoadBalance => {
+                        let url = pool
+                            .probe_url
+                            .as_deref()
+                            .filter(|s| !s.trim().is_empty())
+                            .map(|s| s.trim().to_string())
+                            .unwrap_or_else(|| {
+                                "https://www.gstatic.com/generate_204".into()
+                            });
+                        let interval = pool
+                            .interval
+                            .map(|secs| format!("{secs}s"))
+                            .unwrap_or_else(|| "1m".into());
+                        let tolerance = pool.tolerance.unwrap_or(50);
+                        outbounds.push(json!({
+                            "type": "urltest",
+                            "tag": hop_tags[i],
+                            "outbounds": clone_tags,
+                            "url": url,
+                            "interval": interval,
+                            "tolerance": tolerance,
+                            "idle_timeout": "30m",
+                            "interrupt_exist_connections": false,
+                        }));
+                    }
+                    PoolStrategy::Select => {
+                        let default = clone_tags[0].clone();
+                        outbounds.push(json!({
+                            "type": "selector",
+                            "tag": hop_tags[i],
+                            "outbounds": clone_tags,
+                            "default": default,
+                        }));
+                    }
+                }
             }
             // hop[0] pool: the shared pool selector is emitted by
             // `build_pool_selectors` and is dialed by the client directly.

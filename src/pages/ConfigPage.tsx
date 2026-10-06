@@ -1139,7 +1139,13 @@ export function ConfigPage() {
             </header>
             <div className="modal-body">
               {chainResult.chains.length === 0 ? (
-                <p className="muted">{t("config.chainedEmpty")}</p>
+                chainResult.pools_reused > 0 ? (
+                  <p className="muted">
+                    {t("config.chainedExists", { reused: chainResult.pools_reused })}
+                  </p>
+                ) : (
+                  <p className="muted">{t("config.chainedEmpty")}</p>
+                )
               ) : (
                 <>
                   <p>

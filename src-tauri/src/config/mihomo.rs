@@ -320,6 +320,7 @@ pub fn build_mihomo_config(
         &opts.pools,
         &supported,
         &tags,
+        &probe_url,
         &mut proxies,
         &mut groups,
         &mut chain_entry_tags,
@@ -546,6 +547,7 @@ fn build_chain_groups(
     pools: &[crate::domain::NodePool],
     nodes: &[ProxyNode],
     tags: &[String],
+    probe_url: &str,
     proxies: &mut Vec<Mapping>,
     groups: &mut Vec<Mapping>,
     entry_tags: &mut std::collections::HashMap<String, String>,
@@ -597,8 +599,36 @@ fn build_chain_groups(
                         broken = true;
                         break;
                     }
-                    let default = clone_tags[0].clone();
-                    groups.push(select_group(&hop_tags[i], clone_tags, Some(default)));
+                    // Respect the pool's strategy: a fallback/url-test landing
+                    // pool must auto-pick a healthy clone (not pin the first,
+                    // which for 家宽 openvpn nodes is usually dead — the whole
+                    // point of the fallback strategy).
+                    use crate::domain::PoolStrategy;
+                    let group = match pool.strategy {
+                        PoolStrategy::UrlTest
+                        | PoolStrategy::Fallback
+                        | PoolStrategy::LoadBalance => {
+                            let url = pool
+                                .probe_url
+                                .as_deref()
+                                .filter(|s| !s.trim().is_empty())
+                                .map(|s| s.trim().to_string())
+                                .unwrap_or_else(|| probe_url.to_string());
+                            let mut g = url_test_group(&hop_tags[i], clone_tags, &url);
+                            if let Some(interval) = pool.interval {
+                                g.insert(str_yaml("interval"), num_yaml(interval as u64));
+                            }
+                            if let Some(tolerance) = pool.tolerance {
+                                g.insert(str_yaml("tolerance"), num_yaml(tolerance as u64));
+                            }
+                            g
+                        }
+                        PoolStrategy::Select => {
+                            let default = clone_tags.first().cloned();
+                            select_group(&hop_tags[i], clone_tags, default)
+                        }
+                    };
+                    groups.push(group);
                 }
                 // hop[0] pool: shared group already emitted by the pool loop.
                 ChainHop::Pool { .. } => {}
