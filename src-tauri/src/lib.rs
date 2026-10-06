@@ -507,6 +507,7 @@ pub fn run() {
             commands::read_system_hosts,
             commands::set_current_node_live,
             commands::select_pool,
+            commands::select_chain,
             commands::smart_switch_now,
             commands::list_rule_sets,
             commands::get_rule_set,

@@ -1151,6 +1151,12 @@ export function listChains() {
   return invoke<ProxyChain[]>("list_chains");
 }
 
+/** Select a proxy chain as the current manual egress (main group → chain exit
+ *  hop tag). Chains only exist under sing-box / mihomo. */
+export function selectChain(chainId: string) {
+  return invoke<ProxyStatus>("select_chain", { chainId });
+}
+
 /** Rule-set names referencing each chain (set-level pin or any single rule),
  *  keyed by chain id — same detection the delete guard uses. */
 export function listChainUsage() {

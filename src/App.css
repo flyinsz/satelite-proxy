@@ -2423,6 +2423,15 @@ button {
   flex-shrink: 0;
 }
 
+/* Hop path shown in the 代理链 view (e.g. "⚡ CF前置 → 🏠 家宽节点"). */
+.chain-hop-path {
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* "新增节点池" action row below the pool list. */
 .pool-create-row {
   display: flex;

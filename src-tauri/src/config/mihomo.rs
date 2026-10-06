@@ -163,7 +163,7 @@ pub fn build_mihomo_config(
     let supported: Vec<ProxyNode> = emitted;
 
     let tags: Vec<String> = supported.iter().map(outbound_tag).collect();
-    let selected_tag = resolve_selected_tag(&supported, &tags, &opts.pools, opts.current_node_id.as_deref());
+    let selected_tag = resolve_selected_tag(&supported, &tags, &opts.pools, &opts.chains, opts.current_node_id.as_deref());
 
     // —— proxy-groups ——
     // Kernel auto-select: the main group IS a url-test group over all nodes
@@ -183,6 +183,16 @@ pub fn build_mihomo_config(
         for pool in &opts.pools {
             if pool.enabled && !crate::config::builder::pool_member_tags(pool, &supported, &tags).is_empty() {
                 let tag = pool.outbound_tag();
+                if !members.iter().any(|t| t == &tag) {
+                    members.push(tag);
+                }
+            }
+        }
+        // Chains too: their exit-hop select group is emitted by
+        // `build_chain_groups` below, so the main group can route into it.
+        for chain in &opts.chains {
+            if chain.hops.len() >= 2 {
+                let tag = chain_hop_outbound_tag(chain, chain.hops.len() - 1);
                 if !members.iter().any(|t| t == &tag) {
                     members.push(tag);
                 }

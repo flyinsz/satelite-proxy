@@ -25,6 +25,7 @@ import { nodeFeatureBadges, nodeTip } from "../nodeTooltip";
 import { groupNodes, type GroupBy } from "../nodeGroups";
 import { GlassSeg } from "../components/GlassSeg";
 import { PoolsView } from "./PoolsView";
+import { ChainsView } from "./ChainsView";
 import { waitForCoreRestart } from "../coreBusy";
 import { useVirtualRange } from "../hooks/useVirtualRange";
 import { filterCustomNodes, applyCustomLatency, sortNodes, type CustomLatencyMap } from "../customNodes";
@@ -1075,7 +1076,7 @@ export function NodesPage() {
           <h1>{t("nodes.title")}</h1>
           <p className="page-desc">
             {t("nodes.desc")}
-            {groupBy !== "pools" && (
+            {groupBy !== "pools" && groupBy !== "chains" && (
               <>
                 {" · "}
                 <span className="mono">
@@ -1154,19 +1155,20 @@ export function NodesPage() {
                 { value: "proto", label: t("nodes.groupProto") },
                 { value: "country", label: t("nodes.groupCountry") },
                 { value: "pools", label: t("nodes.groupPools") },
+                { value: "chains", label: t("nodes.groupChains") },
               ]}
             />
             <div className="node-group-fold" role="group" aria-label={t("nodes.groupBy")}>
               {/* CSS-drawn ⊖/⊕ — Unicode math glyphs sit off-center in
                   Segoe UI Symbol on Windows (fine on macOS SF Pro). */}
               <span
-                className={`node-group-fold-label minus${groupBy === "none" ? " disabled" : ""}`}
-                onClick={groupBy === "none" ? undefined : collapseAll}
+                className={`node-group-fold-label minus${groupBy === "none" || groupBy === "chains" ? " disabled" : ""}`}
+                onClick={groupBy === "none" || groupBy === "chains" ? undefined : collapseAll}
                 title={t("nodes.collapseAll")}
               />
               <span
-                className={`node-group-fold-label plus${groupBy === "none" ? " disabled" : ""}`}
-                onClick={groupBy === "none" ? undefined : expandAll}
+                className={`node-group-fold-label plus${groupBy === "none" || groupBy === "chains" ? " disabled" : ""}`}
+                onClick={groupBy === "none" || groupBy === "chains" ? undefined : expandAll}
                 title={t("nodes.expandAll")}
               />
             </div>
@@ -1215,6 +1217,19 @@ export function NodesPage() {
           reload={reload}
           onError={setError}
           renderNodeCard={renderNodeCard}
+        />
+      ) : groupBy === "chains" ? (
+        <ChainsView
+          pools={pools}
+          currentId={currentId}
+          setCurrentId={setCurrentId}
+          autoSelect={autoSelect}
+          setAutoSelect={setAutoSelect}
+          busyId={busyId}
+          setBusyId={setBusyId}
+          switching={switching}
+          setSwitching={setSwitching}
+          onError={setError}
         />
       ) : loading ? (
         <div className="empty">{t("common.loading")}</div>

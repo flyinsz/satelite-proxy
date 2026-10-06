@@ -1547,6 +1547,70 @@ impl AppState {
         Ok((restart_needed, selected_live))
     }
 
+    /// Select a named proxy chain as the current manual egress — the main
+    /// `proxy` group is switched (live, when running) to the chain's exit-hop
+    /// tag, and the chain id is persisted (in `current_node_id`, same as a
+    /// pool id) so the next start restores it. Chains only exist under
+    /// sing-box / mihomo; Xray is rejected up front.
+    /// Returns `(restart_needed, switched_live)`.
+    pub fn select_chain_serialized(&self, chain_id: &str) -> AppResult<(bool, bool)> {
+        let core_running = self.is_core_running();
+        let _operation = self.begin_core_transition()?;
+        let core_kind = {
+            let kind = crate::core::CoreKind::parse(
+                self.with_store(|store| Ok(store.settings.core_type.clone()))?
+                    .as_str(),
+            );
+            kind
+        };
+        if core_kind == crate::core::CoreKind::Xray {
+            return Err(crate::error::AppError::Core(
+                "当前内核（Xray）不支持代理链，请切换到 sing-box 或 mihomo".into(),
+            ));
+        }
+        let (tag, kernel_auto, chain_id_owned) = self.with_store(|store| {
+            if store.settings.runtime_source().is_custom() {
+                return Err(crate::error::AppError::Core(
+                    "自写配置模式下无法切换链路".into(),
+                ));
+            }
+            let chain = store
+                .chains
+                .iter()
+                .find(|c| c.id == chain_id)
+                .ok_or_else(|| crate::error::AppError::NotFound(chain_id.to_string()))?;
+            if chain.hops.len() < 2 {
+                return Err(crate::error::AppError::Config(
+                    "链路至少需要两跳".into(),
+                ));
+            }
+            Ok((
+                crate::config::chain_hop_outbound_tag(chain, chain.hops.len() - 1),
+                store.settings.auto_select.is_kernel(),
+                chain_id.to_string(),
+            ))
+        })?;
+        let api = {
+            let runtime = self.lock_runtime();
+            runtime.clash_api_clone()
+        };
+        let selected_live = if kernel_auto {
+            false
+        } else if let Some(api) = api {
+            api.select_proxy("proxy", &tag)?;
+            let _ = api.close_all_connections();
+            true
+        } else {
+            false
+        };
+        let was_kernel = self.with_store_mut(|store| {
+            let was_kernel = apply_selected_node(&mut store.settings, chain_id_owned, true);
+            Ok(was_kernel)
+        })?;
+        let restart_needed = was_kernel || core_running;
+        Ok((restart_needed, selected_live))
+    }
+
     /// When auto_select=kernel, read Clash API group `now` and persist as current_node_id.
     pub fn schedule_kernel_selection_sync(app: tauri::AppHandle) {
         use tauri::Manager;

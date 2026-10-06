@@ -196,3 +196,25 @@ pub async fn select_pool(app: AppHandle, pool_id: String) -> Result<ProxyStatus,
     .await
     .map_err(|e| format!("live pool selection task: {e}"))?
 }
+
+/// Select a named proxy chain as the current manual egress — the main `proxy`
+/// group is switched (live, when running) to the chain's exit-hop tag, and the
+/// chain id is persisted. Chains only exist under sing-box / mihomo.
+#[tauri::command]
+pub async fn select_chain(app: AppHandle, chain_id: String) -> Result<ProxyStatus, String> {
+    let worker_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = worker_app
+            .try_state::<AppState>()
+            .ok_or_else(|| "app state unavailable".to_string())?;
+        let (restart_needed, _) = state
+            .select_chain_serialized(&chain_id)
+            .map_err(|e| e.to_string())?;
+        if restart_needed {
+            crate::rule_apply::request_restart(worker_app.clone(), Vec::new());
+        }
+        state.proxy_status().map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("live chain selection task: {e}"))?
+}

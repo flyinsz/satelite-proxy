@@ -122,7 +122,7 @@ pub fn build_xray_config(nodes: &[ProxyNode], opts: &BuildOptions) -> AppResult<
         crate::app_log::warn("xray_config", format!("skipped node: {reason}"));
     }
 
-    let selected_tag = resolve_selected_tag(&supported, &tags, &opts.pools, opts.current_node_id.as_deref());
+    let selected_tag = resolve_selected_tag(&supported, &tags, &opts.pools, &opts.chains, opts.current_node_id.as_deref());
     // kernel auto-select → balancer; otherwise the selected node's outbound.
     let main_target = if opts.auto_select.is_kernel() {
         BALANCER_TAG.to_string()

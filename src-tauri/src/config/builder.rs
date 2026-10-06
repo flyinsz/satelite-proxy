@@ -278,7 +278,7 @@ pub fn build_singbox_config(nodes: &[ProxyNode], opts: &BuildOptions) -> AppResu
         crate::app_log::warn("singbox_config", format!("filtered node: {reason}"));
     }
 
-    let selected_tag = resolve_selected_tag(nodes, &tags, &opts.pools, opts.current_node_id.as_deref());
+    let selected_tag = resolve_selected_tag(nodes, &tags, &opts.pools, &opts.chains, opts.current_node_id.as_deref());
     let effective_rules = effective_route_rules(&opts.rule_sets, &opts.rules);
 
     let mut outbounds = Vec::new();
@@ -321,6 +321,17 @@ pub fn build_singbox_config(nodes: &[ProxyNode], opts: &BuildOptions) -> AppResu
         for pool in &opts.pools {
             if pool.enabled && !pool_member_tags(pool, nodes, &tags).is_empty() {
                 let tag = pool.outbound_tag();
+                if !selector_outbounds.iter().any(|t| t == &tag) {
+                    selector_outbounds.push(tag);
+                }
+            }
+        }
+        // Chains are user-selectable egress targets too — include each chain's
+        // exit-hop tag so the main group can route into it (mirrors the pool
+        // loop above; build_chain_outbounds_for emits that tag).
+        for chain in &opts.chains {
+            if chain.hops.len() >= 2 {
+                let tag = chain_hop_outbound_tag(chain, chain.hops.len() - 1);
                 if !selector_outbounds.iter().any(|t| t == &tag) {
                     selector_outbounds.push(tag);
                 }
@@ -1185,6 +1196,7 @@ pub(crate) fn resolve_selected_tag(
     nodes: &[ProxyNode],
     tags: &[String],
     pools: &[crate::domain::NodePool],
+    chains: &[crate::domain::ProxyChain],
     current_id: Option<&str>,
 ) -> String {
     if let Some(id) = current_id {
@@ -1194,6 +1206,15 @@ pub(crate) fn resolve_selected_tag(
         if let Some(pool) = pools.iter().find(|p| p.id == id && p.enabled) {
             if !pool_member_tags(pool, nodes, tags).is_empty() {
                 return pool.outbound_tag();
+            }
+        }
+        // A chain id resolves to the chain's exit-hop tag (its LAST hop is the
+        // egress the internet sees), which build_chain_outbounds* emits. Only
+        // valid under sing-box / mihomo — Xray never generates chain outbounds
+        // (select_chain rejects there before this runs).
+        if let Some(chain) = chains.iter().find(|c| c.id == id) {
+            if chain.hops.len() >= 2 {
+                return chain_hop_outbound_tag(chain, chain.hops.len() - 1);
             }
         }
         if let Some(node) = nodes.iter().find(|n| n.id == id) {
