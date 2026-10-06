@@ -326,14 +326,15 @@ pub fn build_singbox_config(nodes: &[ProxyNode], opts: &BuildOptions) -> AppResu
                 }
             }
         }
-        // Chains are user-selectable egress targets too — include each chain's
-        // exit-hop tag so the main group can route into it (mirrors the pool
-        // loop above; build_chain_outbounds_for emits that tag).
+        // Chains are user-selectable egress targets too — include each LIVE
+        // chain's exit-hop tag so the main group can route into it (mirrors the
+        // pool loop above). Must match `chain_hop_tags` liveness exactly, or a
+        // broken chain would be referenced without an emitted outbound.
         for chain in &opts.chains {
-            if chain.hops.len() >= 2 {
-                let tag = chain_hop_outbound_tag(chain, chain.hops.len() - 1);
-                if !selector_outbounds.iter().any(|t| t == &tag) {
-                    selector_outbounds.push(tag);
+            if let Some(hop_tags) = chain_hop_tags(chain, &opts.pools, nodes, &tags) {
+                let tag = &hop_tags[hop_tags.len() - 1];
+                if !selector_outbounds.iter().any(|t| t == tag) {
+                    selector_outbounds.push(tag.clone());
                 }
             }
         }
@@ -1460,6 +1461,56 @@ pub fn chain_hop_outbound_tag(chain: &crate::domain::ProxyChain, hop_index: usiz
         "{}-h{hop_index}",
         &chain.id[chain.id.len().saturating_sub(20)..]
     )
+}
+
+/// Resolve every hop of a chain to its outbound tag, or `None` when the chain
+/// is currently broken (a stale hop, or an empty pool). This is the single
+/// "is this chain live?" predicate shared by the main-group member list and
+/// the per-kernel chain builders — they must agree, or the main group would
+/// reference a chain-exit tag that was never emitted (mihomo `proxy: not
+/// found` / sing-box `outbound not found`).
+pub(crate) fn chain_hop_tags(
+    chain: &crate::domain::ProxyChain,
+    pools: &[crate::domain::NodePool],
+    nodes: &[ProxyNode],
+    tags: &[String],
+) -> Option<Vec<String>> {
+    use crate::domain::ChainHop;
+    if chain.hops.len() < 2 {
+        return None;
+    }
+    let live_pool_ids: std::collections::HashSet<&str> = pools
+        .iter()
+        .filter(|p| !pool_member_tags(p, nodes, tags).is_empty())
+        .map(|p| p.id.as_str())
+        .collect();
+    let mut hop_tags = Vec::with_capacity(chain.hops.len());
+    for (i, hop) in chain.hops.iter().enumerate() {
+        match hop {
+            ChainHop::Node { node_id } => {
+                let live = nodes
+                    .iter()
+                    .find(|n| &n.id == node_id)
+                    .is_some_and(|n| tags.iter().any(|t| t == &outbound_tag(n)));
+                if !live {
+                    return None;
+                }
+                hop_tags.push(chain_hop_outbound_tag(chain, i));
+            }
+            ChainHop::Pool { pool_id } => {
+                if !live_pool_ids.contains(pool_id.as_str()) {
+                    return None;
+                }
+                let tag = if i == 0 {
+                    crate::domain::pool_outbound_tag_for_id(pool_id)
+                } else {
+                    chain_hop_outbound_tag(chain, i)
+                };
+                hop_tags.push(tag);
+            }
+        }
+    }
+    Some(hop_tags)
 }
 
 /// Build the `detour` chain for one [`ProxyChain`]. User-facing semantics:

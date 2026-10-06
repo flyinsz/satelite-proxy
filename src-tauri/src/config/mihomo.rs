@@ -14,9 +14,9 @@
 //! mihomo home dir — see `core::assets`).
 
 use crate::config::builder::{
-    chain_hop_outbound_tag, clamp_rule_pin_to_set, effective_route_rules, filter_pool_tags,
-    outbound_tag, pool_member_nodes, resolve_selected_tag, rule_set_is_empty_for_config,
-    smart_pool_tags, BuildOptions,
+    clamp_rule_pin_to_set, effective_route_rules, filter_pool_tags, outbound_tag,
+    pool_member_nodes, resolve_selected_tag, rule_set_is_empty_for_config, smart_pool_tags,
+    BuildOptions,
 };
 use crate::config::punycode::to_ascii_domain;
 use crate::core::kind::CoreKind;
@@ -189,12 +189,16 @@ pub fn build_mihomo_config(
             }
         }
         // Chains too: their exit-hop select group is emitted by
-        // `build_chain_groups` below, so the main group can route into it.
+        // `build_chain_groups` below — but only for LIVE chains, so gate on
+        // the same `chain_hop_tags` predicate or the main group would reference
+        // a tag that never got emitted (mihomo `proxy: not found`).
         for chain in &opts.chains {
-            if chain.hops.len() >= 2 {
-                let tag = chain_hop_outbound_tag(chain, chain.hops.len() - 1);
-                if !members.iter().any(|t| t == &tag) {
-                    members.push(tag);
+            if let Some(hop_tags) =
+                crate::config::builder::chain_hop_tags(chain, &opts.pools, &supported, &tags)
+            {
+                let tag = &hop_tags[hop_tags.len() - 1];
+                if !members.iter().any(|t| t == tag) {
+                    members.push(tag.clone());
                 }
             }
         }
@@ -546,55 +550,18 @@ fn build_chain_groups(
     groups: &mut Vec<Mapping>,
     entry_tags: &mut std::collections::HashMap<String, String>,
 ) {
-    let live_pool_ids: std::collections::HashSet<&str> = pools
-        .iter()
-        .filter(|p| !crate::config::builder::pool_member_tags(p, nodes, tags).is_empty())
-        .map(|p| p.id.as_str())
-        .collect();
-
     for chain in chains {
-        if chain.hops.len() < 2 {
+        // Resolve every hop's tag first; bail on any dead hop. This is the
+        // same `chain_hop_tags` predicate the main group gates on, so a tag
+        // only appears in the main group when it is actually emitted here.
+        let Some(hop_tags) = crate::config::builder::chain_hop_tags(chain, pools, nodes, tags)
+        else {
             continue;
-        }
-
-        // Resolve every hop's tag first; bail on any dead hop.
-        let mut hop_tags: Vec<String> = Vec::with_capacity(chain.hops.len());
-        let mut broken = false;
-        for (i, hop) in chain.hops.iter().enumerate() {
-            match hop {
-                ChainHop::Node { node_id } => {
-                    let live = nodes
-                        .iter()
-                        .find(|n| &n.id == node_id)
-                        .is_some_and(|n| tags.iter().any(|t| t == &outbound_tag(n)));
-                    if !live {
-                        broken = true;
-                        break;
-                    }
-                    hop_tags.push(chain_hop_outbound_tag(chain, i));
-                }
-                ChainHop::Pool { pool_id } => {
-                    if !live_pool_ids.contains(pool_id.as_str()) {
-                        broken = true;
-                        break;
-                    }
-                    // hop[0] pool: client-side entry, shared group suffices;
-                    // pools at i ≥ 1 get a chain-local select group.
-                    let tag = if i == 0 {
-                        crate::domain::pool_outbound_tag_for_id(pool_id)
-                    } else {
-                        chain_hop_outbound_tag(chain, i)
-                    };
-                    hop_tags.push(tag);
-                }
-            }
-        }
-        if broken {
-            continue;
-        }
+        };
 
         let last = chain.hops.len() - 1;
         // Emit forward so each hop's `dialer-proxy` target precedes it.
+        let mut broken = false;
         for i in 0..chain.hops.len() {
             let prev = if i == 0 {
                 None
