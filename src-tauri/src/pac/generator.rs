@@ -5,6 +5,45 @@
 
 use super::PacList;
 
+/// 正向白名单模式的核心兜底域名（防 gfwlist 更新延迟 / 遗漏新站）。
+///
+/// gfwlist 是社区维护、更新有滞后，新出现的被墙站点可能暂未收录，导致
+/// 正向模式下它们被判 DIRECT 直连而打不开。此表硬编码主流被墙服务的
+/// 核心域名，与 gfwlist 合并去重后一并走代理，保证常用站点始终可达。
+/// 仅正向模式（`china_direct == false`）生效；反向模式默认已走代理。
+const CORE_PROXY_DOMAINS: &[&str] = &[
+    // Google 全家桶
+    "google.com", "google.com.hk", "gstatic.com", "googleapis.com",
+    "googleusercontent.com", "googlevideo.com", "youtube.com", "ytimg.com",
+    "ggpht.com", "googleadservices.com", "googlesyndication.com",
+    // 社交 / 通讯
+    "twitter.com", "x.com", "t.co", "twimg.com", "facebook.com", "fbcdn.net",
+    "instagram.com", "cdninstagram.com", "whatsapp.com", "whatsapp.net",
+    "telegram.org", "t.me", "telegram.me", "discord.com", "discordapp.com",
+    "discord.gg", "reddit.com", "redd.it", "pinterest.com", "pinimg.com",
+    // 视频 / 直播 / 流媒体
+    "netflix.com", "nflxvideo.net", "twitch.tv", "jtvnw.net", "spotify.com",
+    "scdn.co", "vimeo.com", "tiktok.com", "tiktokv.com",
+    // AI / 科技
+    "openai.com", "chatgpt.com", "oaistatic.com", "oaiusercontent.com",
+    "anthropic.com", "claude.ai", "huggingface.co", "openrouter.ai",
+    // 百科 / 内容 / 社区
+    "wikipedia.org", "wikimedia.org", "wiktionary.org", "medium.com",
+    "quora.com", "quoracdn.net",
+    // 开发
+    "github.com", "githubusercontent.com", "github.io", "gitlab.com",
+    "docker.com", "docker.io", "stackoverflow.com", "stackexchange.com",
+    "npmjs.com", "unpkg.com", "jsdelivr.net", "cdnjs.cloudflare.com",
+    "vercel.app", "netlify.app", "pages.dev",
+    // 邮件 / 隐私
+    "protonmail.com", "proton.me", "protonvpn.com",
+    // 新闻 / 媒体
+    "nytimes.com", "bbc.com", "bbc.co.uk", "wsj.com", "bloomberg.com",
+    "economist.com", "reuters.com", "theguardian.com",
+    // 云 / CDN
+    "cloudflare.com", "amazonaws.com", "s3.amazonaws.com", "fastly.net",
+];
+
 /// 生成完整 PAC JavaScript 文本。
 ///
 /// 两种模式：
@@ -38,15 +77,25 @@ pub fn generate_pac(
     let mut rules: Vec<String> = Vec::new();
 
     // 域名（后缀匹配）：统一去前导点、加一个点前缀。
-    // 自定义域名与 gfwlist 上游域名合并去重后再生成，避免重复规则。
-    // 自定义分组（custom_*）里的条目按域名后缀处理。
-    for domain in list.all_domains() {
+    // 自定义域名、gfwlist 上游域名、核心兜底域名合并去重后再生成。
+    //
+    // 关键：PAC 的 `dnsDomainIs(host, ".d")` 只匹配「子域」（如
+    // "www.d"），不匹配「裸域名」（"d"）。直接访问裸域名（如
+    // `https://github.com`）会被漏判。故每条规则同时做裸域名精确匹配
+    // `host == "d"`，与子域后缀匹配一起覆盖。
+    let mut seen = std::collections::HashSet::new();
+    for domain in list
+        .all_domains()
+        .into_iter()
+        .chain(CORE_PROXY_DOMAINS.iter().map(|s| (*s).to_string()))
+    {
         let d = normalize_dot_domain(&domain);
-        if !d.is_empty() {
-            rules.push(format!(
-                "    if (dnsDomainIs(host, \".{d}\")) return PROXY;"
-            ));
+        if d.is_empty() || !seen.insert(d.clone()) {
+            continue;
         }
+        rules.push(format!(
+            "    if (host == \"{d}\" || dnsDomainIs(host, \".{d}\")) return PROXY;"
+        ));
     }
 
     // IP / CIDR。
@@ -143,15 +192,16 @@ fn generate_china_direct_pac(list: &PacList, proxy_host: &str, proxy_port: u16) 
 
 /// 统计名单会生成多少条 PAC 匹配规则。
 ///
-/// 与 [`generate_pac`] 的入口口径一致：域名合并去重、IP/CIDR 只算能解析的、
-/// 地区按展开后的 CIDR 条数计。反向模式则统计内网（固定 6 条）+ 中国域名 +
-/// 中国 IP 段。供 UI 展示「规则数」用。
+/// 与 [`generate_pac`] 的入口口径一致：域名合并去重（含核心兜底）、
+/// IP/CIDR 只算能解析的、地区按展开后的 CIDR 条数计。反向模式则统计
+/// 内网（固定 6 条）+ 中国 IP 段。供 UI 展示「规则数」用。
 pub fn count_pac_rules(list: &PacList, china_direct: bool) -> usize {
     if china_direct {
         // 内网/回环固定 6 条（isPlainHostName + 5 个网段）。
         // 反向模式不再枚举 `china_domains`：十万量级会让 PAC 超过浏览器
         // 可执行体积上限（Chrome > ~1MB 放弃 PAC 回退直连），中国域名直连
-        // 由内核 `GEOSITE,cn,DIRECT` 兜底。此处仅计 IP 段。
+        // 交给 `isInNet` 对域名的 DNS 解析 + 中国 IP 段（浏览器 PAC 引擎
+        // 的 isInNet 会解析域名）。此处仅计 IP 段。
         let mut count = 6;
         count += list
             .china_ip_cidrs
@@ -161,7 +211,20 @@ pub fn count_pac_rules(list: &PacList, china_direct: bool) -> usize {
         return count;
     }
 
-    let mut count = list.all_domains().len();
+    let mut count = 0;
+    {
+        let mut seen = std::collections::HashSet::new();
+        for domain in list
+            .all_domains()
+            .into_iter()
+            .chain(CORE_PROXY_DOMAINS.iter().map(|s| (*s).to_string()))
+        {
+            let d = normalize_dot_domain(&domain);
+            if !d.is_empty() && seen.insert(d) {
+                count += 1;
+            }
+        }
+    }
 
     if list.group_enabled("ip_cidrs") {
         for item in &list.ip_cidrs {
@@ -284,8 +347,19 @@ mod tests {
         let script = generate_pac(&list, "127.0.0.1", 2080, false);
         // shared.com 只出现一次（自定义与上游重复）。
         assert_eq!(script.matches("dnsDomainIs(host, \".shared.com\")").count(), 1);
-        assert!(script.contains("dnsDomainIs(host, \".google.com\")"));
-        assert_eq!(count_pac_rules(&list, false), 2);
+        // 裸域名 + 子域都覆盖。
+        assert!(script.contains("host == \"google.com\" || dnsDomainIs(host, \".google.com\")"));
+        // 计数 = 名单去重后的域名数 + 核心兜底域名数。
+        let mut expected = 2; // shared.com + google.com
+        let mut seen: std::collections::HashSet<String> = ["shared.com".to_string(), "google.com".to_string()]
+            .into_iter()
+            .collect();
+        for d in CORE_PROXY_DOMAINS {
+            if seen.insert((*d).to_string()) {
+                expected += 1;
+            }
+        }
+        assert_eq!(count_pac_rules(&list, false), expected);
     }
 
     #[test]
@@ -354,8 +428,9 @@ mod tests {
         };
         let pac = generate_pac(&list, "127.0.0.1", 2080, false);
         assert!(pac.contains("var PROXY = \"PROXY 127.0.0.1:2080; DIRECT\";"));
-        assert!(pac.contains("if (dnsDomainIs(host, \".google.com\")) return PROXY;"));
-        assert!(pac.contains("if (dnsDomainIs(host, \".youtube.com\")) return PROXY;"));
+        // 裸域名 + 子域都覆盖（修复 dnsDomainIs 漏判裸域名）。
+        assert!(pac.contains("host == \"google.com\" || dnsDomainIs(host, \".google.com\")"));
+        assert!(pac.contains("host == \"youtube.com\" || dnsDomainIs(host, \".youtube.com\")"));
         assert!(pac.contains("return \"DIRECT\";"));
     }
 
@@ -405,8 +480,10 @@ mod tests {
         let pac = generate_pac(&PacList::default(), "127.0.0.1", 2080, false);
         assert!(pac.starts_with("function FindProxyForURL(url, host) {"));
         assert!(pac.ends_with("}\n"));
-        assert!(!pac.contains("dnsDomainIs"));
+        // 核心兜底域名总会生成（即使名单为空），但不应有 IP 段规则。
+        assert!(pac.contains("dnsDomainIs"));
         assert!(!pac.contains("isInNet"));
+        assert!(pac.contains("return \"DIRECT\";"));
     }
 
     #[test]
