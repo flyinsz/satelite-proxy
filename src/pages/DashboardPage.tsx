@@ -8,6 +8,7 @@ import {
   getSettings,
   getSubscription,
   listAllNodes,
+  listChains,
   listPools,
   listSubscriptions,
   onNodeLatencyChanged,
@@ -46,6 +47,7 @@ import type {
   GenerateConfigResult,
   NodePool,
   OutboundMode,
+  ProxyChain,
   ProxyNode,
   ProxyStatus,
   SubscriptionTraffic,
@@ -215,6 +217,8 @@ export function DashboardPage({
   const [currentNodeId, setCurrentNodeId] = useState<string | null>(null);
   /** Named pools — current_node_id may point at a pool instead of a node. */
   const [pools, setPools] = useState<NodePool[]>([]);
+  /** Proxy chains — current_node_id may point at a chain instead of a node. */
+  const [chains, setChains] = useState<ProxyChain[]>([]);
   const [settingsPorts, setSettingsPorts] = useState({
     mixed: 2080,
     api: 19090,
@@ -335,6 +339,7 @@ function coreDisplayName(kind: string | null | undefined): string {
         getCoreInfo("mihomo").catch(() => null),
         getLanIp().catch(() => null),
         listPools().catch(() => []),
+        listChains().catch(() => []),
       ]);
 
       const [settings, status] = await statusP;
@@ -349,14 +354,16 @@ function coreDisplayName(kind: string | null | undefined): string {
       pushSpark(status);
       setStatusReady(true);
 
-      const [subList, nodeList, coreSingbox, coreXray, coreMihomo, lan, poolList] =
+      const [subList, nodeList, coreSingbox, coreXray, coreMihomo, lan, poolList, chainList] =
         await detailP;
       setSubs(subList);
       setNodes(nodeList);
       setLanIp(lan ?? null);
       setPools(poolList);
+      setChains(chainList);
       const cur =
         nodeList.find((n) => n.id === settings.current_node_id) ??
+        chainList.find((c) => c.id === settings.current_node_id) ??
         null;
       setCurrentNode(cur);
       // Version card shows the ACTIVE core's name + version (core_type reports
@@ -908,6 +915,7 @@ function coreDisplayName(kind: string | null | undefined): string {
       : running
         ? currentNode?.name
           ?? pools.find((p) => p.id === currentNodeId)?.name
+          ?? chains.find((c) => c.id === currentNodeId)?.name
           ?? t("dashboard.disconnected")
         : isError
           ? t("dashboard.errorTitle")
@@ -922,7 +930,9 @@ function coreDisplayName(kind: string | null | undefined): string {
           ? [currentNode.protocol.toUpperCase(), fmtLatency(currentNode.latency_ms)]
               .filter(Boolean)
               .join(" · ")
-          : t("chain.poolModeExplicit") // pool pick: show a pool badge instead
+          : chains.some((c) => c.id === currentNodeId)
+            ? t("chain.title") // chain pick: show a chain badge instead
+            : t("chain.poolModeExplicit") // pool pick: show a pool badge instead
         : t("dashboard.desc");
 
   // Long node names shrink to one line instead of wrapping the hero.
