@@ -121,17 +121,13 @@ fn generate_china_direct_pac(list: &PacList, proxy_host: &str, proxy_port: u16) 
     out.push_str("  if (isInNet(host, \"192.168.0.0\", \"255.255.0.0\")) return \"DIRECT\";\n");
     out.push_str("  if (isInNet(host, \"169.254.0.0\", \"255.255.0.0\")) return \"DIRECT\";\n");
 
-    // 中国域名直连（后缀匹配）。
-    for domain in &list.china_domains {
-        let d = normalize_dot_domain(domain);
-        if !d.is_empty() {
-            out.push_str(&format!(
-                "  if (dnsDomainIs(host, \".{d}\")) return \"DIRECT\";\n"
-            ));
-        }
-    }
-
     // 中国 IP 段直连（chnroute CIDR）。
+    //
+    // 刻意枚举 `china_domains`（十万量级）会让 PAC 膨胀到数 MB，超出浏览器
+    // 可执行的 PAC 体积上限（实测 Chrome > ~1MB 即放弃 PAC 回退直连），
+    // 反而导致代理完全失效。中国域名的直连判定交给内核的
+    // `GEOSITE,cn,DIRECT` / `GEOIP,cn,DIRECT` 兜底；此处仅保留 IP 段
+    // （数千条，数百 KB）作为浏览器层的直连兜底。
     for item in &list.china_ip_cidrs {
         if let Some((ip, mask)) = split_cidr(item) {
             out.push_str(&format!(
@@ -153,12 +149,10 @@ fn generate_china_direct_pac(list: &PacList, proxy_host: &str, proxy_port: u16) 
 pub fn count_pac_rules(list: &PacList, china_direct: bool) -> usize {
     if china_direct {
         // 内网/回环固定 6 条（isPlainHostName + 5 个网段）。
+        // 反向模式不再枚举 `china_domains`：十万量级会让 PAC 超过浏览器
+        // 可执行体积上限（Chrome > ~1MB 放弃 PAC 回退直连），中国域名直连
+        // 由内核 `GEOSITE,cn,DIRECT` 兜底。此处仅计 IP 段。
         let mut count = 6;
-        for domain in &list.china_domains {
-            if !normalize_dot_domain(domain).is_empty() {
-                count += 1;
-            }
-        }
         count += list
             .china_ip_cidrs
             .iter()
@@ -431,19 +425,24 @@ mod tests {
     }
 
     #[test]
-    fn china_direct_mode_emits_china_domains_and_cidrs() {
+    fn china_direct_mode_emits_china_cidrs_only_skipping_domains() {
+        // 反向模式刻意不枚举 china_domains：十万量级会让 PAC 撑到数 MB，
+        // 超过浏览器可执行上限（Chrome > ~1MB 放弃 PAC 回退直连），
+        // 中国域名直连改由内核 `GEOSITE,cn,DIRECT` 兜底。仅生成 IP 段。
         let list = PacList {
             china_domains: vec!["cn".into(), ".com.cn".into()],
             china_ip_cidrs: vec!["1.0.1.0/24".into(), "bad/garbage".into()],
             ..Default::default()
         };
         let pac = generate_pac(&list, "127.0.0.1", 2080, true);
-        assert!(pac.contains("if (dnsDomainIs(host, \".cn\")) return \"DIRECT\";"));
-        assert!(pac.contains("if (dnsDomainIs(host, \".com.cn\")) return \"DIRECT\";"));
+        // 域名规则不再出现（体积上限兜底）。
+        assert!(!pac.contains("dnsDomainIs"));
+        // IP 段仍生成，非法条目跳过。
         assert!(pac.contains("if (isInNet(host, \"1.0.1.0\", \"255.255.255.0\")) return \"DIRECT\";"));
         assert!(!pac.contains("bad/garbage"));
-        // 计数与实际规则行一致：6 内网 + 2 域名 + 1 合法 CIDR（非法跳过）。
-        assert_eq!(count_pac_rules(&list, true), 9);
+        assert!(pac.contains("return PROXY;"));
+        // 计数与实际规则行一致：6 内网 + 1 合法 CIDR（域名不计、非法跳过）。
+        assert_eq!(count_pac_rules(&list, true), 7);
     }
 
     #[test]
@@ -460,5 +459,29 @@ mod tests {
         assert!(!pac.contains("custom.com"));
         assert!(!pac.contains("google.com"));
         assert_eq!(count_pac_rules(&list, true), 6);
+    }
+
+    #[test]
+    fn china_direct_pac_stays_under_browser_size_limit() {
+        // 回归护栏：反向 PAC 必须远小于浏览器可执行上限。
+        // 实测 Chrome 对 > ~1MB 的 PAC 会放弃执行并回退直连（代理完全失效），
+        // 根因是旧实现枚举了十万量级 china_domains。此处用真实量级名单断言
+        // 输出体积不会失控。
+        let list = PacList {
+            // 模拟线上量级：11 万中国域名 + 6.7 千 CIDR。
+            china_domains: (0..110_000).map(|i| format!("d{i}.example.cn")).collect(),
+            china_ip_cidrs: (0..6_700)
+                .map(|i| format!("1.{}.{}.0/24", i / 256, i % 256))
+                .collect(),
+            ..Default::default()
+        };
+        let pac = generate_pac(&list, "127.0.0.1", 2080, true);
+        // 域名不再进 PAC —— 体积应远小于 1MB（约 500KB 量级，纯 IP 段）。
+        assert!(
+            pac.len() < 1_000_000,
+            "反向 PAC 体积 {} 字节超过浏览器 ~1MB 上限（会导致 Chrome 放弃 PAC 直连）",
+            pac.len()
+        );
+        assert!(!pac.contains("dnsDomainIs"));
     }
 }
