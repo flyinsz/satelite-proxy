@@ -1469,7 +1469,7 @@ pub fn chain_hop_outbound_tag(chain: &crate::domain::ProxyChain, hop_index: usiz
 /// the per-kernel chain builders — they must agree, or the main group would
 /// reference a chain-exit tag that was never emitted (mihomo `proxy: not
 /// found` / sing-box `outbound not found`).
-pub(crate) fn chain_hop_tags(
+pub fn chain_hop_tags(
     chain: &crate::domain::ProxyChain,
     pools: &[crate::domain::NodePool],
     nodes: &[ProxyNode],

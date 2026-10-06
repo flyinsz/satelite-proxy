@@ -1450,7 +1450,7 @@ function ChainDiagModal({ chain, onClose }: { chain: ProxyChain; onClose: () => 
   );
 }
 
-function ChainEditorModal({
+export function ChainEditorModal({
   chain,
   nodes,
   pools,

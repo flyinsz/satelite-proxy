@@ -1584,6 +1584,16 @@ impl AppState {
                     "链路至少需要两跳".into(),
                 ));
             }
+            // Reject a dead chain up front: its exit tag is neither emitted nor
+            // a main-group member, so hot-switching to it would 400 (mihomo) /
+            // reference nothing (sing-box). Same predicate the builders use.
+            let nodes = store.enabled_nodes();
+            let tags: Vec<String> = nodes.iter().map(crate::config::outbound_tag).collect();
+            if crate::config::chain_hop_tags(chain, &store.pools, &nodes, &tags).is_none() {
+                return Err(crate::error::AppError::Config(
+                    "该链路已失效（成员节点不可用），请重新导入或编辑".into(),
+                ));
+            }
             Ok((
                 crate::config::chain_hop_outbound_tag(chain, chain.hops.len() - 1),
                 store.settings.auto_select.is_kernel(),

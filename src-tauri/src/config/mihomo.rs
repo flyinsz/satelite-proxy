@@ -1535,6 +1535,7 @@ fn apply_transport(m: &mut Mapping, node: &ProxyNode) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::chain_hop_outbound_tag;
     use crate::domain::{AutoSelectMode, DnsSettings, TlsConfig};
 
     fn vless_node(name: &str, flow: Option<&str>) -> ProxyNode {

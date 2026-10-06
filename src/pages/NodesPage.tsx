@@ -1221,6 +1221,7 @@ export function NodesPage() {
       ) : groupBy === "chains" ? (
         <ChainsView
           pools={pools}
+          nodes={nodes}
           currentId={currentId}
           setCurrentId={setCurrentId}
           autoSelect={autoSelect}

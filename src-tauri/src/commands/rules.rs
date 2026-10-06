@@ -1121,13 +1121,21 @@ fn ensure_pool_for_group(
     if !crate::domain::ClashProxyGroup::supported_kind(&group.kind) {
         return None;
     }
-    // Existing pool → reuse + sync strategy/probe.
+    // Existing pool → reuse, but refresh Explicit members against the current
+    // node list. openvpn 家宽 nodes re-hash their id on every subscription
+    // refresh (the raw body's server IP / certs rotate), so the ids pinned at
+    // import time go stale; re-resolving by name keeps the pool alive.
     if let Some(pool) = store
         .pools
         .iter()
         .find(|p| p.name.eq_ignore_ascii_case(&group.name))
     {
         let id = pool.id.clone();
+        let resolved: Vec<String> = group
+            .members
+            .iter()
+            .filter_map(|m| node_ids.get(m).cloned())
+            .collect();
         if let Some(p) = store
             .pools
             .iter_mut()
@@ -1137,6 +1145,11 @@ fn ensure_pool_for_group(
             p.probe_url = group.url.clone();
             p.interval = group.interval.and_then(|secs| u32::try_from(secs).ok());
             p.tolerance = group.tolerance;
+            if !resolved.is_empty() {
+                p.mode = crate::domain::PoolMode::Explicit {
+                    node_ids: resolved,
+                };
+            }
         }
         return Some((id, false));
     }
@@ -1264,15 +1277,18 @@ pub fn import_subscription_chains(
                 pools_created += usize::from(lc);
                 pools_reused += usize::from(!lc);
 
-                // Chain name = landing group name; dedupe with a suffix.
-                let mut name = landing_name.clone();
-                let mut n = 2u32;
-                while store.chains.iter().any(|c| c.name.eq_ignore_ascii_case(&name)) {
-                    name = format!("{landing_name} #{n}");
-                    n += 1;
+                // Chain name = landing group name. Idempotent: a re-import must
+                // NOT duplicate chains (it refreshes the backing pool members
+                // above instead) — skip a same-name chain if one exists.
+                if store
+                    .chains
+                    .iter()
+                    .any(|c| c.name.eq_ignore_ascii_case(landing_name))
+                {
+                    continue;
                 }
                 match store.create_chain(
-                    &name,
+                    landing_name,
                     vec![
                         crate::domain::ChainHop::Pool {
                             pool_id: front_pool_id,
