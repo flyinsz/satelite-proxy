@@ -2432,6 +2432,25 @@ button {
   white-space: nowrap;
 }
 
+/* Landing-pool strategy badge inside the hop path: auto = accent, manual =
+   neutral, so "自动选择/故障转移" chains read as "just works" and "手动选择"
+   reads as needing a pick. */
+.chain-strategy-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.45rem;
+  border-radius: 999px;
+  font-size: 0.62rem;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.chain-strategy-badge.manual {
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  color: var(--muted);
+}
+
 /* "新增节点池" action row below the pool list. */
 .pool-create-row {
   display: flex;

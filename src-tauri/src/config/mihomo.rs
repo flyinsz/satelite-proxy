@@ -579,6 +579,9 @@ fn build_chain_groups(
                         .expect("liveness checked in the tag pass");
                     let members = pool_member_nodes(pool, nodes, tags);
                     let mut clone_tags = Vec::with_capacity(members.len());
+                    // (latency, clone_tag) — lets a Select landing pool default
+                    // to its lowest-latency clone instead of the first.
+                    let mut by_latency: Vec<(u32, String)> = Vec::with_capacity(members.len());
                     for (j, node) in members.into_iter().enumerate() {
                         let clone_tag = format!("{}-m{j}", hop_tags[i]);
                         let mut m = match mihomo_proxy_mapping(node) {
@@ -593,6 +596,7 @@ fn build_chain_groups(
                             m.insert(str_yaml("dialer-proxy"), str_yaml(p));
                         }
                         proxies.push(m);
+                        by_latency.push((node.latency_ms.unwrap_or(u32::MAX), clone_tag.clone()));
                         clone_tags.push(clone_tag);
                     }
                     if broken || clone_tags.is_empty() {
@@ -624,7 +628,15 @@ fn build_chain_groups(
                             g
                         }
                         PoolStrategy::Select => {
-                            let default = clone_tags.first().cloned();
+                            // Default to the lowest-latency clone so "use this
+                            // chain" lands on a reachable node, not the first
+                            // (often dead) one. Falls back to the first when no
+                            // latency is known.
+                            let default = by_latency
+                                .iter()
+                                .min_by_key(|(lat, _)| *lat)
+                                .map(|(_, t)| t.clone())
+                                .or_else(|| clone_tags.first().cloned());
                             select_group(&hop_tags[i], clone_tags, default)
                         }
                     };

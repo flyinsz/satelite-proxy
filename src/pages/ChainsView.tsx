@@ -82,6 +82,31 @@ export function ChainsView({
     [pools],
   );
 
+  /** Landing pool (last hop) strategy — the exit group's pick behavior. */
+  const landingStrategy = useCallback(
+    (chain: ProxyChain): string | null => {
+      const last = chain.hops[chain.hops.length - 1];
+      if (!last || last.kind !== "pool") return null;
+      return pools.find((p) => p.id === last.pool_id)?.strategy ?? null;
+    },
+    [pools],
+  );
+
+  const strategyLabel = (strategy: string): string => {
+    switch (strategy) {
+      case "select":
+        return t("chain.strategySelect");
+      case "url_test":
+        return t("chain.strategyUrlTest");
+      case "fallback":
+        return t("chain.strategyFallback");
+      case "load_balance":
+        return t("chain.strategyLoadBalance");
+      default:
+        return strategy;
+    }
+  };
+
   /** Select a chain as the current manual egress (mirrors PoolsView's onUsePool). */
   async function onUseChain(chainId: string) {
     if (busyId || switching) return;
@@ -139,6 +164,7 @@ export function ChainsView({
             {chains.map((c) => {
               const isCurrent = c.id === currentId;
               const path = c.hops.map(hopLabel).join(" → ");
+              const strategy = landingStrategy(c);
               return (
                 <div
                   key={c.id}
@@ -152,6 +178,13 @@ export function ChainsView({
                   <span className="node-group-count mono">{c.hops.length}</span>
                   <span className="chain-hop-path" title={path}>
                     {path}
+                    {strategy && (
+                      <span
+                        className={`chain-strategy-badge${strategy === "select" ? " manual" : ""}`}
+                      >
+                        {strategyLabel(strategy)}
+                      </span>
+                    )}
                   </span>
                   <span style={{ flex: 1 }} />
                   <RowMenu

@@ -1600,6 +1600,9 @@ fn build_chain_outbounds_for(
                     .expect("liveness checked in the tag pass");
                 let members = pool_member_nodes(pool, nodes, tags);
                 let mut clone_tags = Vec::with_capacity(members.len());
+                // (latency, clone_tag) — lets a Select landing pool default to
+                // its lowest-latency clone instead of the first.
+                let mut by_latency: Vec<(u32, String)> = Vec::with_capacity(members.len());
                 for (j, node) in members.into_iter().enumerate() {
                     let clone_tag = format!("{}-m{j}", hop_tags[i]);
                     let (_, mut ob, extra) = match node_to_outbound_tagged(node, Some(&clone_tag)) {
@@ -1611,6 +1614,7 @@ fn build_chain_outbounds_for(
                         obj.insert("detour".into(), json!(prev));
                     }
                     outbounds.push(ob);
+                    by_latency.push((node.latency_ms.unwrap_or(u32::MAX), clone_tag.clone()));
                     clone_tags.push(clone_tag);
                 }
                 // A pool with zero clones was filtered by `live_pool_ids`
@@ -1650,7 +1654,11 @@ fn build_chain_outbounds_for(
                         }));
                     }
                     PoolStrategy::Select => {
-                        let default = clone_tags[0].clone();
+                        let default = by_latency
+                            .iter()
+                            .min_by_key(|(lat, _)| *lat)
+                            .map(|(_, t)| t.clone())
+                            .unwrap_or_else(|| clone_tags[0].clone());
                         outbounds.push(json!({
                             "type": "selector",
                             "tag": hop_tags[i],
