@@ -127,11 +127,14 @@ fn generate_china_direct_pac(list: &PacList, proxy_host: &str, proxy_port: u16) 
 
     // 中国 IP 段直连（chnroute CIDR）。
     //
-    // 刻意枚举 `china_domains`（十万量级）会让 PAC 膨胀到数 MB，超出浏览器
-    // 可执行的 PAC 体积上限（实测 Chrome > ~1MB 即放弃 PAC 回退直连），
-    // 反而导致代理完全失效。中国域名的直连判定交给内核的
-    // `GEOSITE,cn,DIRECT` / `GEOIP,cn,DIRECT` 兜底；此处仅保留 IP 段
-    // （数千条，数百 KB）作为浏览器层的直连兜底。
+    // 刻意不枚举 `china_domains`（十万量级）——那会让 PAC 膨胀到数 MB，
+    // 超出浏览器可执行的 PAC 体积上限（实测 Chrome > ~1MB 即放弃 PAC
+    // 回退直连），反而导致代理完全失效。
+    //
+    // 中国域名的直连判定靠 `isInNet`：PAC 引擎的 isInNet 会对**域名**做
+    // DNS 解析后再比对 IP 段（实测 Chrome 对 baidu.com 能命中 183.0.0.0/8
+    // 而 DIRECT）。因此国内域名仍在 PAC 层被 IP 段拦截直连、不进内核，
+    // 节点故障不影响国内访问——与「国内流量不进内核」的初衷一致。
     for item in &list.china_ip_cidrs {
         if let Some((ip, mask)) = split_cidr(item) {
             out.push_str(&format!(
