@@ -1225,17 +1225,21 @@ pub fn import_subscription_chains(
             let mut landing_to_front: Vec<(String, String)> = Vec::new();
             let mut seen: std::collections::HashSet<(String, String)> =
                 std::collections::HashSet::new();
+            let (mut total_nodes, mut with_raw, mut with_target) = (0usize, 0usize, 0usize);
             for node in store
                 .nodes
                 .iter()
                 .filter(|n| n.subscription_id == subscription_id)
             {
+                total_nodes += 1;
                 let Some(raw) = node.node.raw.as_deref() else {
                     continue;
                 };
+                with_raw += 1;
                 let Some(target) = extract_dialer_proxy_target(raw) else {
                     continue;
                 };
+                with_target += 1;
                 for g in &groups {
                     if g.members.iter().any(|m| m == &node.node.name) {
                         let key = (g.name.clone(), target.clone());
@@ -1246,9 +1250,9 @@ pub fn import_subscription_chains(
                 }
             }
             if landing_to_front.is_empty() {
-                return Err(crate::error::AppError::Config(
-                    "未检测到链式节点（dialer-proxy）".into(),
-                ));
+                return Err(crate::error::AppError::Config(format!(
+                    "未检测到链式节点（dialer-proxy）：订阅共 {total_nodes} 个节点，{with_raw} 个含原始条目，{with_target} 个含 dialer-proxy，但均未匹配到任何 proxy-group 成员。请刷新订阅后重试。"
+                )));
             }
 
             // Build pools + chains atomically.
@@ -2057,6 +2061,46 @@ dialer-proxy: \"⚡ CF前置\"
         assert_eq!(extract_dialer_proxy_target(no_dialer), None);
     }
 
+    /// 真实 openvpn 家宽 raw：dialer-proxy 值**无引号**（`⚡ CF前置`），且
+    /// 含 PEM 证书 block scalar。serde_yaml 必须能解析出目标名，否则
+    /// `import_subscription_chains` 识别不到链式结构。
+    #[test]
+    fn extracts_dialer_proxy_from_real_openvpn_raw() {
+        let raw = "name: 🏠 JP-家宽-01
+type: openvpn
+server: 124.18.216.146
+port: 1539
+proto: tcp
+username: vpn
+password: vpn
+cipher: AES-128-CBC
+auth: SHA1
+udp: false
+handshake-timeout: 30
+remote-dns-resolve: true
+dns:
+- 8.8.8.8
+- 1.1.1.1
+dialer-proxy: ⚡ CF前置
+ca: |-
+  -----BEGIN CERTIFICATE-----
+  MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
+  -----END CERTIFICATE-----
+cert: |-
+  -----BEGIN CERTIFICATE-----
+  MIICxjCCAa4CAQAwDQYJKoZIhvcNAQEFBQAwKTEaMBgGA1UEAxMRVlBOR2F0ZUNs
+  -----END CERTIFICATE-----
+key: |-
+  -----BEGIN RSA PRIVATE KEY-----
+  MIIEpAIBAAKCAQEA5h2lgQQYUjwoKYJbzVZA5VcIGd5otPc/qZRMt0KItCFA0s9R
+  -----END RSA PRIVATE KEY-----
+";
+        assert_eq!(
+            extract_dialer_proxy_target(raw).as_deref(),
+            Some("⚡ CF前置")
+        );
+    }
+
     #[test]
     fn ensure_pool_creates_then_reuses() {
         let mut store = crate::storage::AppStore::default();
@@ -2129,3 +2173,5 @@ dialer-proxy: \"⚡ CF前置\"
         assert!(store.pools.is_empty());
     }
 }
+
+

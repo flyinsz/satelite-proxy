@@ -138,7 +138,6 @@ export function ChainsView({
             </div>
             {chains.map((c) => {
               const isCurrent = c.id === currentId;
-              const busy = busyId === c.id;
               const path = c.hops.map(hopLabel).join(" → ");
               return (
                 <div
@@ -155,13 +154,6 @@ export function ChainsView({
                     {path}
                   </span>
                   <span style={{ flex: 1 }} />
-                  <GlassButton
-                    variant={isCurrent ? "primary" : "plain"}
-                    disabled={busy || switching}
-                    onClick={() => void onUseChain(c.id)}
-                  >
-                    {busy ? "…" : isCurrent ? t("nodes.chainInUse") : t("nodes.chainUse")}
-                  </GlassButton>
                   <RowMenu
                     id={`chain-${c.id}`}
                     openId={openMenuId}
