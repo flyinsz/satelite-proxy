@@ -1245,7 +1245,7 @@ fn build_route_rules(
     sorted
         .into_iter()
         .filter_map(|r| {
-            let payload = r.payload.trim();
+            let payload = r.clean_payload();
             if payload.is_empty() {
                 return None;
             }

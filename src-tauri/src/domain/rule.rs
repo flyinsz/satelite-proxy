@@ -134,6 +134,24 @@ impl Rule {
         }
     }
 
+    /// Payload cleaned for use as a matcher, with any stray trailing
+    /// comma-separated flags removed.
+    ///
+    /// A clash line such as `IP-CIDR,1.2.3.0/24,no-resolve` has three
+    /// fields; if such a line is pasted/imported verbatim the `no-resolve`
+    /// flag can be folded into the payload. Emitting that as
+    /// `IP-CIDR,1.2.3.0/24,no-resolve,<target>` makes the core read
+    /// `no-resolve` as the outbound → "proxy [no-resolve] not found".
+    /// IP-CIDR payloads are always a bare CIDR, so keep only the first field.
+    pub fn clean_payload(&self) -> &str {
+        let payload = self.payload.trim();
+        if matches!(self.rule_type, RuleType::IpCidr) {
+            payload.split(',').next().unwrap_or(payload).trim()
+        } else {
+            payload
+        }
+    }
+
     pub fn compute_id(
         rule_type: RuleType,
         payload: &str,
@@ -864,7 +882,7 @@ pub fn format_clash_rules_list(set_name: &str, rules: &[Rule]) -> String {
             lines.push(format!(
                 "# disabled: {},{},{}",
                 r.clash_type_token(),
-                r.payload.trim(),
+                r.clean_payload(),
                 r.target.clash_token()
             ));
             continue;
@@ -872,7 +890,7 @@ pub fn format_clash_rules_list(set_name: &str, rules: &[Rule]) -> String {
         let mut line = format!(
             "{},{},{}",
             r.clash_type_token(),
-            r.payload.trim(),
+            r.clean_payload(),
             r.target.clash_token()
         );
         if matches!(r.rule_type, RuleType::IpCidr) {
@@ -922,6 +940,34 @@ mod tests {
             }),
         ];
         assert!(!rules_contain_ip_cidr(&rules));
+    }
+
+    #[test]
+    fn ip_cidr_payload_keeps_only_cidr_field() {
+        // A clash line pasted verbatim (`IP-CIDR,1.2.3.0/24,no-resolve`)
+        // can fold the flag into the payload. clean_payload must drop it so
+        // emitters never produce `IP-CIDR,1.2.3.0/24,no-resolve,<target>`
+        // (which mihomo reads as target `no-resolve` → check failure).
+        let mut rule = Rule::new(
+            RuleType::IpCidr,
+            "172.110.32.0/21,no-resolve".into(),
+            RuleTarget::Proxy,
+            0,
+        );
+        assert_eq!(rule.clean_payload(), "172.110.32.0/21");
+        rule.payload = "173.194.0.0/16,no-resolve,extra".into();
+        assert_eq!(rule.clean_payload(), "173.194.0.0/16");
+        // Non-IP rules keep their payload as-is (commas are not expected,
+        // but must not be silently truncated for other types).
+        let mut domain = Rule::new(
+            RuleType::DomainSuffix,
+            "example.com".into(),
+            RuleTarget::Proxy,
+            1,
+        );
+        assert_eq!(domain.clean_payload(), "example.com");
+        domain.payload = "  spaced.com ".into();
+        assert_eq!(domain.clean_payload(), "spaced.com");
     }
 
     #[test]

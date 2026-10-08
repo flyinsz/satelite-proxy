@@ -846,7 +846,7 @@ fn rule_to_mihomo(
     smart_group_tags: &std::collections::HashMap<String, String>,
     chain_entry_tags: &std::collections::HashMap<String, String>,
 ) -> Option<String> {
-    let payload = rule.payload.trim();
+    let payload = rule.clean_payload();
     if payload.is_empty() || matches!(rule.rule_type, RuleType::Geoip) {
         return None;
     }

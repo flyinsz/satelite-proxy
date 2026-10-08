@@ -567,7 +567,7 @@ fn rule_to_xray(
     smart_balancer_tags: &std::collections::HashMap<String, String>,
 ) -> Option<Value> {
     use crate::domain::Rule;
-    let payload = rule.payload.trim();
+    let payload = rule.clean_payload();
     if payload.is_empty() || matches!(rule.rule_type, RuleType::Geoip) {
         return None;
     }
