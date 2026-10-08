@@ -2849,6 +2849,8 @@ export function RulesPage({ embedded = false }: Props) {
                     { value: "local", label: t("rules.addModeLocal") },
                     { value: "remote", label: t("rules.addModeRemote") },
                   ]}
+                  disabledValues={geoCore ? new Set(["remote"]) : undefined}
+                  titles={geoCore ? { remote: t("rules.remoteSrsInert") } : undefined}
                 />
               </label>
               <label className="field">

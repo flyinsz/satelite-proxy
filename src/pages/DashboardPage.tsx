@@ -363,7 +363,6 @@ function coreDisplayName(kind: string | null | undefined): string {
       setChains(chainList);
       const cur =
         nodeList.find((n) => n.id === settings.current_node_id) ??
-        chainList.find((c) => c.id === settings.current_node_id) ??
         null;
       setCurrentNode(cur);
       // Version card shows the ACTIVE core's name + version (core_type reports
