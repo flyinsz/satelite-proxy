@@ -3521,6 +3521,18 @@ body.ruleset-dragging .ruleset-item:not(.selected):hover {
   z-index: 60;
 }
 
+/* While a rule-set ⋮ menu (or its flyout submenu) is open, lift the whole
+   sidebar above the main column. Both cards are isolation-isolated stacking
+   contexts painted in DOM order and `.rules-main` comes later, so its
+   toolbar (z-index:70) and table card paint OVER the sidebar's flyout that
+   escapes the card — most visibly the 路由/DNS flyout submenus, which open
+   to the right into the main column's area. Mirrors the
+   .rules-table-wrap:has(.rule-menu-pop) fix for table row menus. */
+.ruleset-list:has(.rule-menu-pop) {
+  position: relative;
+  z-index: 80;
+}
+
 tr.rule-row {
   cursor: pointer;
 }
