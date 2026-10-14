@@ -11,6 +11,7 @@ mod domain;
 mod error;
 mod log_listener;
 mod log_retention;
+mod mcp;
 mod pac;
 mod portable;
 mod proxy;
@@ -283,6 +284,9 @@ pub fn run() {
             // Smart node switch (docs/auto.md): passive + on-demand probe.
             smart_switch::spawn(app.handle().clone());
 
+            // Local MCP server (agent integration): settings-controlled tools.
+            mcp::spawn(app.handle().clone());
+
             // Core watchdog: a core that dies without a user stop is
             // auto-restarted, bounded by
             // an attempt budget so config-error loops cannot spin.
@@ -456,6 +460,7 @@ pub fn run() {
             commands::list_node_ids,
             commands::list_custom_config_nodes,
             commands::get_settings,
+            commands::get_mcp_status,
             commands::update_settings,
             commands::diagnose_network,
             commands::check_exit_ip,

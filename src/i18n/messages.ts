@@ -370,6 +370,12 @@ const en = {
   "settings.multiCorePort": "Sidecar base port",
   "settings.multiCorePortHint":
     "Each delegated node occupies one consecutive 127.0.0.1 port from this base.",
+  "settings.mcpTitle": "MCP Server",
+  "settings.mcpDesc":
+    "Let local AI agents call and modify settings via MCP (127.0.0.1 only, no auth)",
+  "settings.mcpPort": "MCP port",
+  "settings.mcpRunning": "Running",
+  "settings.mcpStopped": "Not running",
   "settings.multiCoreSingboxOnly":
     "Multi-core mode requires the sing-box main core; switching to another core turns it off.",
   "settings.appLatest": "Latest release",
@@ -1666,6 +1672,12 @@ const zh: Record<MessageKey, string> = {
   "settings.multiCorePort": "副进程端口基址",
   "settings.multiCorePortHint":
     "每个委托节点从此基址起占用一个连续的 127.0.0.1 端口。",
+  "settings.mcpTitle": "MCP 服务",
+  "settings.mcpDesc":
+    "允许本机 AI agent 通过 MCP 调用与修改配置（仅 127.0.0.1，无鉴权）",
+  "settings.mcpPort": "MCP 端口",
+  "settings.mcpRunning": "运行中",
+  "settings.mcpStopped": "未运行",
   "settings.multiCoreSingboxOnly":
     "多核模式仅支持 sing-box 主内核；切换到其他内核时会自动关闭。",
   "settings.appLatest": "最新版本",

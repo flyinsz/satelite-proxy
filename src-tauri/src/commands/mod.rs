@@ -8,7 +8,7 @@ mod latency;
 mod logs;
 mod pac;
 mod proxy;
-mod rules;
+pub(crate) mod rules;
 pub mod subscription;
 
 pub use chain::*;

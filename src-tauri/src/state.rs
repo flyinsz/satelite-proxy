@@ -530,6 +530,8 @@ pub struct AppState {
     /// One global debounced apply queue for toggles and remote-rule updates.
     rule_apply_queue: Mutex<crate::rule_apply::RuleApplyQueue>,
     kernel_selection_poll: Mutex<KernelSelectionPoll>,
+    /// Local MCP server (agent integration). `None` = not running.
+    mcp_server: Mutex<Option<crate::mcp::McpServer>>,
 }
 
 struct CoreTransitionGuard<'a> {
@@ -596,6 +598,7 @@ impl AppState {
             pending_import_urls: Mutex::new(None),
             rule_apply_queue: Mutex::new(crate::rule_apply::RuleApplyQueue::default()),
             kernel_selection_poll: Mutex::new(KernelSelectionPoll::default()),
+            mcp_server: Mutex::new(None),
         })
     }
 
@@ -951,6 +954,64 @@ impl AppState {
     {
         let guard = self.lock_store();
         f(&guard)
+    }
+
+    // —— MCP server lifecycle ——
+
+    /// Start the local MCP server (idempotent: an already-running instance is
+    /// stopped first). Called from the spawn thread and by update_settings.
+    pub fn start_mcp(
+        &self,
+        port: u16,
+        handler: crate::mcp::server::RpcHandler,
+    ) -> AppResult<String> {
+        self.stop_mcp();
+        let server = tauri::async_runtime::block_on(crate::mcp::McpServer::start(port, handler))
+            .map_err(crate::error::AppError::Io)?;
+        let url = server.url();
+        *recover_lock(&self.mcp_server, "mcp_server") = Some(server);
+        Ok(url)
+    }
+
+    /// Stop the MCP server if running (no-op otherwise).
+    pub fn stop_mcp(&self) {
+        let taken = recover_lock(&self.mcp_server, "mcp_server").take();
+        if let Some(server) = taken {
+            tauri::async_runtime::block_on(server.stop());
+            app_log::info("mcp", "MCP server stopped");
+        }
+    }
+
+    /// MCP snapshot for the settings UI / `get_mcp_status` command.
+    pub fn mcp_status(&self) -> (bool, bool, u16, Option<String>) {
+        let (enabled, port) = self
+            .with_store(|store| Ok((store.settings.mcp_enabled, store.settings.mcp_port)))
+            .unwrap_or((false, 0));
+        let running = recover_lock(&self.mcp_server, "mcp_server")
+            .as_ref()
+            .map(|s| (s.port(), s.url()));
+        match running {
+            Some((actual_port, url)) => (enabled, true, actual_port, Some(url)),
+            None => (enabled, false, port, None),
+        }
+    }
+
+    /// Re-read mcp settings and restart the server accordingly (update_settings
+    /// hook). Failures log a warning and keep the setting — same policy as
+    /// `update_pac_settings`.
+    pub fn restart_mcp_from_settings(&self, app: &tauri::AppHandle) {
+        let (enabled, port) = self
+            .with_store(|store| Ok((store.settings.mcp_enabled, store.settings.mcp_port)))
+            .unwrap_or((false, 0));
+        if !enabled {
+            self.stop_mcp();
+            return;
+        }
+        let handler = crate::mcp::handler_for(app);
+        match self.start_mcp(port, handler) {
+            Ok(url) => app_log::info("mcp", format!("MCP server serving at {url}")),
+            Err(e) => app_log::warn("mcp", format!("MCP server restart failed: {e}")),
+        }
     }
 
     /// Persist probe results through the real-vs-ping priority rule and

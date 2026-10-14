@@ -655,6 +655,10 @@ export interface AppSettings {
   system_proxy_kind?: SystemProxyKind;
   /** 本地 PAC HTTP 服务端口。 */
   pac_port?: number;
+  /** 内置 MCP server 开关（agent 集成）。 */
+  mcp_enabled?: boolean;
+  /** 内置 MCP server 端口（仅 127.0.0.1）。 */
+  mcp_port?: number;
   /** system | gvisor | mixed */
   tun_stack?: string;
   /** Include an IPv6 address on the TUN interface. Off by default — most

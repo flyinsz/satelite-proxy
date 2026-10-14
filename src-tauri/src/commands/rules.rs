@@ -62,7 +62,7 @@ fn apply_running(app: &AppHandle) {
 /// Whether any rule set is enabled. Crossing zero enabled sets switches the
 /// builder between grouped sets and the legacy flat rule list, which does
 /// change the generated config even for empty sets.
-fn any_rule_set_enabled(store: &crate::storage::AppStore) -> bool {
+pub(crate) fn any_rule_set_enabled(store: &crate::storage::AppStore) -> bool {
     store.rule_sets.iter().any(|set| set.enabled)
 }
 

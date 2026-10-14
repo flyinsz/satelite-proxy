@@ -468,6 +468,10 @@ export interface SettingsUpdatePayload {
   protocolCores?: import("./types").ProtocolCoreItem[] | null;
   /** Base loopback port for the sidecar's per-node inbounds. */
   sidecarPort?: number | null;
+  /** 内置 MCP server 开关（agent 集成）。 */
+  mcpEnabled?: boolean | null;
+  /** 内置 MCP server 端口（仅 127.0.0.1）。 */
+  mcpPort?: number | null;
 }
 
 type SettingsWaiter = {
@@ -523,6 +527,8 @@ function scheduleSettingsWrite() {
       tlsFragmentXray: payload.tlsFragmentXray ?? null,
       protocolCores: payload.protocolCores ?? null,
       sidecarPort: payload.sidecarPort ?? null,
+      mcpEnabled: payload.mcpEnabled ?? null,
+      mcpPort: payload.mcpPort ?? null,
     })
       .then((settings) => {
         settingsSnapshot = settings;
@@ -549,6 +555,18 @@ export function updateSettings(payload: SettingsUpdatePayload) {
 /** Rotate the clash_api secret (user-triggered). Restarts a running core. */
 export function regenerateApiSecret() {
   return keepSettings(invoke<AppSettings>("regenerate_api_secret"));
+}
+
+export interface McpStatus {
+  enabled: boolean;
+  running: boolean;
+  port: number;
+  url?: string | null;
+}
+
+/** Local MCP server snapshot for the settings page. */
+export function getMcpStatus() {
+  return invoke<McpStatus>("get_mcp_status");
 }
 
 export function setCurrentNode(nodeId: string) {

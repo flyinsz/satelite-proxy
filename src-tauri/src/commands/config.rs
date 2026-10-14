@@ -60,6 +60,26 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<AppSettings, String> {
         .map_err(|e| e.to_string())
 }
 
+/// Local MCP server snapshot for the settings page (enabled/running/port/url).
+#[derive(serde::Serialize)]
+pub struct McpStatus {
+    pub enabled: bool,
+    pub running: bool,
+    pub port: u16,
+    pub url: Option<String>,
+}
+
+#[tauri::command(async)]
+pub fn get_mcp_status(state: State<'_, AppState>) -> McpStatus {
+    let (enabled, running, port, url) = state.mcp_status();
+    McpStatus {
+        enabled,
+        running,
+        port,
+        url,
+    }
+}
+
 /// Rotate the clash_api secret (user-triggered from Settings → Ports).
 /// Restarts a running core so the new secret takes effect immediately.
 #[tauri::command]
@@ -119,8 +139,13 @@ pub fn update_settings(
     // mihomo's kernel has no equivalent, hence no switch for it.
     tls_fragment_singbox: Option<bool>,
     tls_fragment_xray: Option<bool>,
+    // Local MCP server (agent integration). mcp_port must not collide with
+    // mixed/api/pac ports; changes restart the server in place.
+    mcp_enabled: Option<bool>,
+    mcp_port: Option<u16>,
 ) -> Result<AppSettings, String> {
     let mut launch_changed: Option<bool> = None;
+    let mut mcp_changed = false;
     let mut auto_select_changed: Option<(
         crate::domain::AutoSelectMode,
         crate::domain::AutoSelectMode,
@@ -412,6 +437,29 @@ pub fn update_settings(
                     store.settings.tls_fragment_xray = v;
                 }
             }
+            // —— MCP server ——
+            if let Some(p) = mcp_port {
+                if p == 0 {
+                    return Err(AppError::Config("MCP 端口无效".into()));
+                }
+                // 端口冲突检查以 store 中"变更后"的其他端口为准：mixed/api
+                // 已在本闭包前面更新，pac_port 本闭包不修改。
+                if p == store.settings.mixed_port || p == store.settings.api_port {
+                    return Err(AppError::Config(
+                        "MCP 端口不能与代理端口或内核 API 端口相同".into(),
+                    ));
+                }
+                if store.settings.mcp_port != p {
+                    mcp_changed = true;
+                    store.settings.mcp_port = p;
+                }
+            }
+            if let Some(v) = mcp_enabled {
+                if store.settings.mcp_enabled != v {
+                    mcp_changed = true;
+                    store.settings.mcp_enabled = v;
+                }
+            }
             Ok(store.settings.clone())
         })
         .map_err(|e| e.to_string())?;
@@ -439,7 +487,12 @@ pub fn update_settings(
             .map(|(prev, next)| prev.is_kernel() != next.is_kernel())
             .unwrap_or(false);
     if need_restart {
-        crate::rule_apply::request_restart(app, Vec::new());
+        crate::rule_apply::request_restart(app.clone(), Vec::new());
+    }
+    if mcp_changed {
+        // stop 旧实例 + 按新设置 start；失败仅记日志不回滚设置
+        // （与 update_pac_settings 的容错策略一致）。
+        state.restart_mcp_from_settings(&app);
     }
 
     Ok(settings)

@@ -239,8 +239,8 @@ pub fn get_subscription(
 /// (the first add of a URL keeps the historical id shape); a collision with
 /// an existing subscription re-hashes with entropy — the same URL may now be
 /// subscribed multiple times and each copy must stay independent.
-fn fresh_subscription_id(
-    state: &State<'_, AppState>,
+pub(crate) fn fresh_subscription_id(
+    state: &AppState,
     source: SubscriptionSource,
 ) -> Result<String, String> {
     state
@@ -510,7 +510,7 @@ pub async fn refresh_subscription_by_id(
     refresh_subscription_inner(app, state, id.to_string(), None).await
 }
 
-async fn refresh_subscription_inner(
+pub(crate) async fn refresh_subscription_inner(
     app: &tauri::AppHandle,
     state: &AppState,
     id: String,
@@ -801,7 +801,7 @@ pub fn list_subscription_nodes(
         .map_err(|e| e.to_string())
 }
 
-fn persist_import(
+pub(crate) fn persist_import(
     app: &tauri::AppHandle,
     state: &AppState,
     outcome: crate::services::import::ImportOutcome,
@@ -939,7 +939,7 @@ pub async fn set_runtime_source(
 /// subscriptions keeps the OLD node set live in the kernel while the UI
 /// shows the new one — and through-kernel latency probes then fail
 /// instantly for every node missing from the stale config.
-fn queue_rebuild_if_enabled_set_changed(
+pub(crate) fn queue_rebuild_if_enabled_set_changed(
     app: &tauri::AppHandle,
     state: &AppState,
     before: &[bool],
@@ -964,7 +964,7 @@ fn queue_rebuild_if_enabled_set_changed(
     }
 }
 
-fn enabled_flags(state: &AppState) -> Vec<bool> {
+pub(crate) fn enabled_flags(state: &AppState) -> Vec<bool> {
     state
         .with_store(|store| Ok(store.subscriptions.iter().map(|s| s.enabled).collect()))
         .unwrap_or_default()

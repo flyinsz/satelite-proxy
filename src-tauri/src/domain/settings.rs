@@ -276,6 +276,12 @@ pub struct AppSettings {
     /// 反向「大陆以外」模式：内网/回环/中国域名/IP 直连，其余默认走代理。
     #[serde(default)]
     pub pac_china_direct: bool,
+    /// 内置 MCP server 开关（agent 集成）。默认关闭。
+    #[serde(default)]
+    pub mcp_enabled: bool,
+    /// 内置 MCP server 监听端口（仅 127.0.0.1）。
+    #[serde(default = "default_mcp_port")]
+    pub mcp_port: u16,
     /// TUN TCP/IP stack: `system` | `gvisor` | `mixed` (default mixed).
     #[serde(default = "default_tun_stack")]
     pub tun_stack: String,
@@ -423,6 +429,10 @@ fn default_pac_port() -> u16 {
     2085
 }
 
+fn default_mcp_port() -> u16 {
+    2086
+}
+
 fn default_pac_source_url() -> String {
     crate::pac::default_source_url()
 }
@@ -563,6 +573,8 @@ impl Default for AppSettings {
             pac_auto_update: false,
             pac_update_interval_hours: default_pac_update_interval_hours(),
             pac_china_direct: false,
+            mcp_enabled: false,
+            mcp_port: default_mcp_port(),
             tun_stack: default_tun_stack(),
             tun_ipv6_enabled: false,
             block_quic: false,

@@ -2633,6 +2633,7 @@ pub(crate) fn compute_sidecar_plan(
     reserved.insert(settings.mixed_port);
     reserved.insert(settings.api_port);
     reserved.insert(crate::config::DIAG_INBOUND_PORT);
+    reserved.insert(settings.mcp_port);
     for inb in &settings.extra_inbounds {
         reserved.insert(inb.port);
     }

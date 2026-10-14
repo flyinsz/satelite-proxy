@@ -13,6 +13,7 @@ import {
   resetCoreToBundled,
   getAppInstallPath,
   getCoreInfo,
+  getMcpStatus,
   getPacList,
   getPacStatus,
   getProxyStatus,
@@ -182,6 +183,11 @@ export function SettingsPage() {
   const [bypassLan, setBypassLan] = useState(true);
   /** Xray sidecar base port — committed on blur/Enter (see onCommitSidecarPort). */
   const [sidecarPort, setSidecarPort] = useState("20890");
+  /** 内置 MCP server（agent 集成）— 开关即时生效，端口 blur/Enter 提交。 */
+  const [mcpPort, setMcpPort] = useState("2086");
+  const [mcpEnabled, setMcpEnabled] = useState(false);
+  const [mcpRunning, setMcpRunning] = useState(false);
+  const [mcpUrl, setMcpUrl] = useState<string | null>(null);
   /** Extra inbound drafts — applied on card save (needs core restart). */
   const [extra, setExtra] = useState<ExtraInbound[]>([]);
   // Extra-inbound editor modal (add / edit share one form).
@@ -841,10 +847,30 @@ export function SettingsPage() {
         setBypassLan(s.bypass_lan !== false);
         setExtra(s.extra_inbounds ?? []);
         setSidecarPort(String(s.sidecar_port ?? 20890));
+        setMcpPort(String(s.mcp_port ?? 2086));
+        setMcpEnabled(!!s.mcp_enabled);
       })
       .catch((e) => setError(typeof e === "string" ? e : String(e)));
     void reloadCore();
   }, [reloadCore]);
+
+  /** MCP server runtime status — polled so the hint line tracks start/stop
+   * done from settings changes (and external store edits) without a manual
+   * page reload. */
+  const refreshMcpStatus = useCallback(() => {
+    getMcpStatus()
+      .then((st) => {
+        setMcpRunning(st.running);
+        setMcpUrl(st.url ?? null);
+      })
+      .catch(() => setMcpRunning(false));
+  }, []);
+
+  useEffect(() => {
+    refreshMcpStatus();
+    const timer = window.setInterval(refreshMcpStatus, 5000);
+    return () => window.clearInterval(timer);
+  }, [refreshMcpStatus]);
 
   /** reportError: surface failures (manual click). force: bypass the 6h
    * cache and hit the network — manual checks always refresh, auto checks
@@ -1513,6 +1539,22 @@ export function SettingsPage() {
       return;
     }
     await patchApp({ sidecarPort: parsed });
+  }
+
+  async function onCommitMcpPort() {
+    const parsed = Number.parseInt(mcpPort, 10);
+    const current = settings?.mcp_port ?? 2086;
+    if (
+      !Number.isFinite(parsed) ||
+      parsed <= 0 ||
+      parsed > 65535 ||
+      parsed === current
+    ) {
+      setMcpPort(String(current));
+      return;
+    }
+    await patchApp({ mcpPort: parsed });
+    refreshMcpStatus();
   }
 
   async function onChangeLocale(next: Locale) {
@@ -2218,6 +2260,55 @@ export function SettingsPage() {
                   onChange={setBypassLan}
                 />
               </div>
+              <div className="via-proxy-row field-span-2">
+                <div>
+                  <div className="sys-proxy-title">{t("settings.mcpTitle")}</div>
+                  <div className="sys-proxy-desc">{t("settings.mcpDesc")}</div>
+                </div>
+                <GlassSwitchControl
+                  checked={mcpEnabled}
+                  title={t("settings.mcpTitle")}
+                  disabled={busy}
+                  onChange={(v) => {
+                    setMcpEnabled(v);
+                    void patchApp({ mcpEnabled: v }).then(refreshMcpStatus);
+                  }}
+                />
+              </div>
+              {mcpEnabled && (
+                <label className="field field-inline field-span-2">
+                  <span className="field-inline-row">
+                    <span className="field-inline-label">
+                      {t("settings.mcpPort")}
+                    </span>
+                    <input
+                      autoCapitalize="off"
+                      autoCorrect="off"
+                      spellCheck={false}
+                      inputMode="numeric"
+                      className="mono"
+                      value={mcpPort}
+                      onChange={(e) => setMcpPort(e.target.value)}
+                      onBlur={() => void onCommitMcpPort()}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter")
+                          (e.target as HTMLInputElement).blur();
+                      }}
+                    />
+                  </span>
+                  <span className="field-hint muted">
+                    {mcpRunning
+                      ? t("settings.mcpRunning")
+                      : t("settings.mcpStopped")}
+                    {mcpUrl ? (
+                      <>
+                        {" · "}
+                        <span className="mono">{mcpUrl}</span>
+                      </>
+                    ) : null}
+                  </span>
+                </label>
+              )}
               <div className="field-divider field-span-2" />
               <label className="field field-inline field-span-2">
                 <span className="field-inline-row">
