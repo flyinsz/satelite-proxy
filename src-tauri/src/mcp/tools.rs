@@ -287,6 +287,39 @@ fn build_tool_defs() -> Vec<ToolDef> {
             &[],
         ),
     },
+    // —— 诊断与自愈 4 ——
+    ToolDef {
+        name: "check_exit_ip",
+        description: "检测当前出口 IP 与连通性（走代理或直连）",
+        input_schema: objSchema(json!({}), &[]),
+    },
+    ToolDef {
+        name: "diagnose_network",
+        description: "网络诊断（检测 TUN 旁路系统 DNS 等系统级问题，只读不改）",
+        input_schema: objSchema(json!({}), &[]),
+    },
+    ToolDef {
+        name: "test_nodes_latency",
+        description: "探测节点延迟（可按节点 id 过滤，返回按延迟升序）",
+        input_schema: objSchema(
+            json!({
+                "node_ids": {"type": "array", "items": {"type": "string"}, "description": "可选，按节点 id 过滤；缺省探测全部启用节点"},
+                "limit": {"type": "integer", "description": "返回延迟最低的前 N 个，默认 20"},
+                "timeout_ms": {"type": "integer", "description": "单节点超时，默认 3000"},
+            }),
+            &[],
+        ),
+    },
+    ToolDef {
+        name: "network_self_heal",
+        description: "网络自愈：检测连通性，不通则按序尝试（启动内核→切规则模式→智能选优→刷新订阅）直至恢复，返回每一步动作与结果",
+        input_schema: objSchema(
+            json!({
+                "refresh_subscription": {"type": "boolean", "description": "前几步无效时是否刷新订阅（默认 true）"},
+            }),
+            &[],
+        ),
+    },
     ]
 }
 
@@ -592,6 +625,13 @@ pub fn dispatch(app: &AppHandle, name: &str, args: Value) -> Result<Value, Strin
         "update_app_prefs" => update_app_prefs(state, app, &args),
         "set_tun_options" => set_tun_options(state, app, &args),
 
+        // —— 诊断（只读同步）——
+        "diagnose_network" => {
+            // 直接复用命令层（无 State 依赖，返回 NetworkDiagnosticsResult）。
+            let result = crate::commands::diagnostics::diagnose_network();
+            serde_json::to_value(result).map_err(|e| e.to_string())
+        }
+
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -666,6 +706,53 @@ pub async fn dispatch_async(app: &AppHandle, name: &str, args: Value) -> Result<
                 }
             }
         }
+        "check_exit_ip" => {
+            let info = probe_connectivity(state).await?;
+            serde_json::to_value(info).map_err(|e| e.to_string())
+        }
+        "test_nodes_latency" => {
+            let timeout_ms = args.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(3000);
+            let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(20).min(200) as usize;
+            let node_ids: Option<Vec<String>> = args
+                .get("node_ids")
+                .and_then(|v| v.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect());
+            let nodes = state
+                .with_store(|store| {
+                    let all = store.enabled_nodes();
+                    Ok(match &node_ids {
+                        Some(ids) => {
+                            let by_id: std::collections::HashMap<&str, &crate::domain::ProxyNode> =
+                                all.iter().map(|n| (n.id.as_str(), n)).collect();
+                            ids.iter()
+                                .filter_map(|id| by_id.get(id.as_str()).map(|n| (*n).clone()))
+                                .collect()
+                        }
+                        None => all,
+                    })
+                })
+                .map_err(|e: AppError| e.to_string())?;
+            if nodes.is_empty() {
+                return Ok(json!([]));
+            }
+            let probe_url = state
+                .with_store(|s| Ok(s.settings.probe_url.clone()))
+                .map_err(|e: AppError| e.to_string())?;
+            let clash = state.lock_runtime().clash_api_clone();
+            let mut results = crate::services::latency::probe_nodes(
+                &nodes,
+                Some(timeout_ms),
+                Some(30),
+                clash,
+                probe_url,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+            results.sort_unstable_by_key(|r| r.latency_ms.unwrap_or(u32::MAX));
+            results.truncate(limit);
+            serde_json::to_value(results).map_err(|e| e.to_string())
+        }
+        "network_self_heal" => self_heal(app, state, &args).await,
         _ => Err(format!("unknown async tool: {name}")),
     }
 }
@@ -676,6 +763,138 @@ fn require_str<'a>(args: &'a Value, key: &str) -> Result<&'a str, String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .ok_or_else(|| format!("params.{key} must be a non-empty string"))
+}
+
+/// 探测当前出口连通性：race 几个公共 IP API，走代理（core 运行且非直连
+/// 模式）或直连。成功 = 能出网并拿到出口 IP。
+async fn probe_connectivity(state: &AppState) -> Result<crate::services::exit_ip::ExitIpInfo, String> {
+    let status = state.proxy_status().map_err(|e| e.to_string())?;
+    let via_proxy = status.running && status.outbound_mode != "direct";
+    crate::services::exit_ip::probe(status.mixed_port, via_proxy).await
+}
+
+/// 网络自愈：逐级探测 + 修复，成功即止。
+///
+/// 顺序（保守、可解释、无全局副作用——不动 capture_mode/TUN）：
+///   1. 初始探测（不通才继续）
+///   2. 内核没跑 → start_proxy
+///   3. 直连模式 → set_outbound_mode(rule)
+///   4. 智能选优 → smart_switch
+///   5. （可选）刷新订阅 → 再 smart_switch
+/// 每步记录动作与结果，最终返回 { ok, healed, exit_ip, steps }。
+async fn self_heal(app: &AppHandle, state: &AppState, args: &Value) -> Result<Value, String> {
+    let refresh = args
+        .get("refresh_subscription")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let resource_dir = app.path().resource_dir().ok();
+    let mut steps: Vec<Value> = Vec::new();
+
+    // 0. 初始探测
+    let mut exit = match probe_connectivity(state).await {
+        Ok(info) => info,
+        Err(e) => {
+            steps.push(json!({"step": "initial_probe", "ok": false, "detail": e}));
+            // 用占位继续，后面每步重探测
+            crate::services::exit_ip::ExitIpInfo {
+                ip: String::new(),
+                country_code: None,
+                via_proxy: false,
+                source: String::new(),
+            }
+        }
+    };
+    if !exit.ip.is_empty() {
+        return Ok(json!({
+            "ok": true,
+            "healed": false,
+            "exit_ip": exit.ip,
+            "country": exit.country_code,
+            "via_proxy": exit.via_proxy,
+            "steps": steps,
+        }));
+    }
+
+    // 1. 内核没跑 → 启动
+    let mut status = state.proxy_status().map_err(|e| e.to_string())?;
+    if !status.running {
+        steps.push(json!({"step": "start_core", "action": "start_proxy", "ok": true, "detail": "core was stopped"}));
+        state
+            .start_proxy(resource_dir.as_deref(), false)
+            .map_err(|e| e.to_string())?;
+        match probe_connectivity(state).await {
+            Ok(info) => {
+                steps.push(json!({"step": "reprobe", "ok": true}));
+                return Ok(json!({"ok": true, "healed": true, "exit_ip": info.ip, "country": info.country_code, "via_proxy": info.via_proxy, "steps": steps}));
+            }
+            Err(e) => steps.push(json!({"step": "reprobe_after_start", "ok": false, "detail": e})),
+        }
+    }
+
+    // 2. 直连模式 → 切 rule
+    status = state.proxy_status().map_err(|e| e.to_string())?;
+    if status.outbound_mode == "direct" {
+        steps.push(json!({"step": "switch_outbound", "action": "set_outbound_mode(rule)", "ok": true, "detail": "was direct"}));
+        state
+            .set_outbound_mode(crate::domain::OutboundMode::Rule, resource_dir.as_deref())
+            .map_err(|e| e.to_string())?;
+        match probe_connectivity(state).await {
+            Ok(info) => {
+                steps.push(json!({"step": "reprobe", "ok": true}));
+                return Ok(json!({"ok": true, "healed": true, "exit_ip": info.ip, "country": info.country_code, "via_proxy": info.via_proxy, "steps": steps}));
+            }
+            Err(e) => steps.push(json!({"step": "reprobe_after_outbound", "ok": false, "detail": e})),
+        }
+    }
+
+    // 3. 智能选优
+    steps.push(json!({"step": "smart_switch", "action": "select_best_now", "ok": true}));
+    match crate::smart_switch::select_best_now(state).await {
+        Ok(r) => steps.push(json!({"step": "smart_switch_result", "switched": r.switched, "to_name": r.to_name})),
+        Err(e) => steps.push(json!({"step": "smart_switch_result", "ok": false, "detail": e})),
+    }
+    match probe_connectivity(state).await {
+        Ok(info) => {
+            steps.push(json!({"step": "reprobe", "ok": true}));
+            return Ok(json!({"ok": true, "healed": true, "exit_ip": info.ip, "country": info.country_code, "via_proxy": info.via_proxy, "steps": steps}));
+        }
+        Err(e) => steps.push(json!({"step": "reprobe_after_smart", "ok": false, "detail": e})),
+    }
+
+    // 4. 刷新订阅 → 再智能选优
+    if refresh {
+        steps.push(json!({"step": "refresh_subscription", "action": "refresh_all", "ok": true}));
+        let ids: Vec<String> = state
+            .with_store(|store| {
+                Ok(store
+                    .subscriptions
+                    .iter()
+                    .filter(|s| s.enabled)
+                    .map(|s| s.id.clone())
+                    .collect())
+            })
+            .map_err(|e: AppError| e.to_string())?;
+        let mut refreshed = 0usize;
+        for id in &ids {
+            if crate::commands::subscription::refresh_subscription_inner(app, state, id.clone(), None)
+                .await
+                .is_ok()
+            {
+                refreshed += 1;
+            }
+        }
+        steps.push(json!({"step": "refresh_subscription_result", "refreshed": refreshed, "total": ids.len()}));
+        let _ = crate::smart_switch::select_best_now(state).await;
+        match probe_connectivity(state).await {
+            Ok(info) => {
+                steps.push(json!({"step": "reprobe", "ok": true}));
+                return Ok(json!({"ok": true, "healed": true, "exit_ip": info.ip, "country": info.country_code, "via_proxy": info.via_proxy, "steps": steps}));
+            }
+            Err(e) => steps.push(json!({"step": "reprobe_after_refresh", "ok": false, "detail": e})),
+        }
+    }
+
+    Ok(json!({"ok": false, "healed": false, "steps": steps}))
 }
 
 fn parse_strategy(s: &str) -> Result<crate::domain::RuleSetStrategy, String> {
@@ -863,7 +1082,7 @@ mod tests {
             );
             assert!(seen.insert(t.name), "duplicate tool: {}", t.name);
         }
-        assert_eq!(tool_defs().len(), 30);
+        assert_eq!(tool_defs().len(), 34);
     }
 
     #[test]

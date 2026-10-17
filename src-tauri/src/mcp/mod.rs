@@ -25,7 +25,15 @@ use crate::state::AppState;
 /// async 工具名集合：tools/call 分流到 [`tools::dispatch_async`]，
 /// 其余进 `spawn_blocking(tools::dispatch)`。
 fn is_async_tool(name: &str) -> bool {
-    matches!(name, "smart_switch" | "add_subscription" | "refresh_subscription")
+    matches!(
+        name,
+        "smart_switch"
+            | "add_subscription"
+            | "refresh_subscription"
+            | "check_exit_ip"
+            | "test_nodes_latency"
+            | "network_self_heal"
+    )
 }
 
 /// 生产 RPC handler：initialize / ping / tools/list 同步回；

@@ -2,7 +2,7 @@ mod chain;
 mod config;
 mod connections;
 mod core;
-mod diagnostics;
+pub(crate) mod diagnostics;
 mod dns;
 mod latency;
 mod logs;
